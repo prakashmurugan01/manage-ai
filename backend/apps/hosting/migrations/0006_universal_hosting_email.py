@@ -1,0 +1,172 @@
+import django.db.models.deletion
+from django.db import migrations, models
+
+
+HOSTED_PLATFORM_CHOICES = [
+    ("vercel", "Vercel"),
+    ("railway", "Railway"),
+    ("aws", "AWS"),
+    ("s3", "AWS S3"),
+    ("cloudfront", "AWS CloudFront"),
+    ("netlify", "Netlify"),
+    ("digitalocean", "DigitalOcean"),
+    ("cloudways", "Cloudways"),
+    ("hostinger", "Hostinger"),
+    ("scalahosting", "ScalaHosting"),
+    ("siteground", "SiteGround"),
+    ("bluehost", "Bluehost"),
+    ("godaddy", "GoDaddy"),
+    ("hostgator", "HostGator"),
+    ("cyberin", "Cyberin"),
+    ("hostingraja", "HostingRaja"),
+    ("bigrock", "BigRock"),
+    ("hosting_home", "Hosting Home"),
+    ("custom", "Custom"),
+]
+
+HOSTING_PROVIDER_CHOICES = [
+    ("aws", "AWS"),
+    ("aws_s3", "AWS S3"),
+    ("aws_cloudfront", "AWS CloudFront"),
+    ("netlify", "Netlify"),
+    ("digitalocean", "DigitalOcean"),
+    ("cloudways", "Cloudways"),
+    ("hostinger", "Hostinger"),
+    ("scalahosting", "ScalaHosting"),
+    ("siteground", "SiteGround"),
+    ("bluehost", "Bluehost"),
+    ("godaddy", "GoDaddy"),
+    ("hostgator", "HostGator"),
+    ("cyberin", "Cyberin"),
+    ("hostingraja", "HostingRaja"),
+    ("bigrock", "BigRock"),
+    ("hosting_home", "Hosting Home"),
+    ("vercel", "Vercel"),
+]
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ("hosting", "0005_multi_provider_hosting"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="hostedproject",
+            name="hosting_platform",
+            field=models.CharField(choices=HOSTED_PLATFORM_CHOICES, default="custom", max_length=32),
+        ),
+        migrations.AlterField(
+            model_name="hostingprovider",
+            name="provider",
+            field=models.CharField(choices=HOSTING_PROVIDER_CHOICES, db_index=True, max_length=24),
+        ),
+        migrations.AlterField(
+            model_name="hostinglink",
+            name="provider",
+            field=models.CharField(choices=HOSTING_PROVIDER_CHOICES, db_index=True, max_length=24),
+        ),
+        migrations.AddField(
+            model_name="hostinglink",
+            name="server_type",
+            field=models.CharField(
+                choices=[
+                    ("shared", "Shared"),
+                    ("vps", "VPS"),
+                    ("cloud", "Cloud"),
+                    ("managed", "Managed"),
+                    ("wordpress", "WordPress"),
+                    ("email", "Email"),
+                    ("static", "Static"),
+                ],
+                db_index=True,
+                default="cloud",
+                max_length=24,
+            ),
+        ),
+        migrations.AddField(
+            model_name="hostinglink",
+            name="tag",
+            field=models.CharField(
+                choices=[
+                    ("production", "Production"),
+                    ("staging", "Staging"),
+                    ("backup", "Backup"),
+                    ("primary", "Primary"),
+                    ("secondary", "Secondary"),
+                ],
+                db_index=True,
+                default="production",
+                max_length=24,
+            ),
+        ),
+        migrations.AlterField(
+            model_name="hostinglifecycle",
+            name="event_type",
+            field=models.CharField(
+                choices=[
+                    ("created", "Created"),
+                    ("updated", "Updated"),
+                    ("renewed", "Renewed"),
+                    ("suspended", "Suspended"),
+                    ("reactivated", "Reactivated"),
+                    ("expired", "Expired"),
+                    ("platform_changed", "Platform changed"),
+                    ("health_check", "Health check"),
+                    ("link_disabled", "Link disabled"),
+                    ("link_enabled", "Link enabled"),
+                    ("failover", "Failover"),
+                    ("provider_synced", "Provider synced"),
+                    ("provider_toggled", "Provider toggled"),
+                    ("email_created", "Email created"),
+                    ("email_deleted", "Email deleted"),
+                    ("email_check", "Email check"),
+                    ("domain_check", "Domain check"),
+                    ("vercel_synced", "Vercel synced"),
+                    ("vercel_redeploy", "Vercel redeploy"),
+                    ("archived", "Archived"),
+                    ("restored", "Restored"),
+                    ("api_key_created", "API key created"),
+                ],
+                max_length=32,
+            ),
+        ),
+        migrations.CreateModel(
+            name="EmailAccount",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("provider", models.CharField(choices=[("cpanel", "cPanel"), ("hostinger", "Hostinger"), ("siteground", "SiteGround"), ("bluehost", "Bluehost"), ("godaddy", "GoDaddy"), ("hostgator", "HostGator"), ("bigrock", "BigRock"), ("google_workspace", "Google Workspace"), ("microsoft_365", "Microsoft 365"), ("custom", "Custom")], db_index=True, default="cpanel", max_length=32)),
+                ("email", models.EmailField(db_index=True, max_length=254)),
+                ("display_name", models.CharField(blank=True, max_length=160)),
+                ("quota_mb", models.PositiveIntegerField(default=1024)),
+                ("used_mb", models.PositiveIntegerField(default=0)),
+                ("status", models.CharField(choices=[("active", "Active"), ("disabled", "Disabled"), ("suspended", "Suspended"), ("misconfigured", "Misconfigured")], db_index=True, default="active", max_length=24)),
+                ("mx_status", models.CharField(db_index=True, default="unknown", max_length=24)),
+                ("last_checked_at", models.DateTimeField(blank=True, null=True)),
+                ("metadata", models.JSONField(blank=True, default=dict)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("hosting_link", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="email_accounts", to="hosting.hostinglink")),
+                ("project", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="email_accounts", to="hosting.hostedproject")),
+            ],
+            options={"ordering": ["project__name", "email"], "unique_together": {("project", "email")}},
+        ),
+        migrations.CreateModel(
+            name="DomainStatus",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("domain", models.CharField(db_index=True, max_length=255)),
+                ("mx_records", models.JSONField(blank=True, default=list)),
+                ("mx_status", models.CharField(choices=[("healthy", "Healthy"), ("warning", "Warning"), ("critical", "Critical"), ("unknown", "Unknown")], db_index=True, default="unknown", max_length=24)),
+                ("ssl_status", models.CharField(choices=[("healthy", "Healthy"), ("warning", "Warning"), ("critical", "Critical"), ("unknown", "Unknown")], db_index=True, default="unknown", max_length=24)),
+                ("ssl_expires_at", models.DateTimeField(blank=True, null=True)),
+                ("domain_expires_at", models.DateField(blank=True, null=True)),
+                ("email_health_score", models.PositiveSmallIntegerField(default=0)),
+                ("last_checked_at", models.DateTimeField(blank=True, null=True)),
+                ("last_error", models.TextField(blank=True)),
+                ("metadata", models.JSONField(blank=True, default=dict)),
+                ("project", models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name="domain_status", to="hosting.hostedproject")),
+            ],
+            options={"ordering": ["domain"]},
+        ),
+    ]

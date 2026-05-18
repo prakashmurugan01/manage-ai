@@ -18,9 +18,14 @@ class NotificationSerializer(serializers.ModelSerializer):
             "title",
             "message",
             "type",
+            "urgency",
             "is_read",
+            "is_sent_email",
             "project",
             "task",
+            "hosted_project",
+            "server",
+            "days_threshold",
             "created_at",
             "updated_at",
         )
@@ -31,6 +36,7 @@ class BroadcastNotificationSerializer(serializers.Serializer):
     recipients = serializers.ListField(child=serializers.IntegerField(), allow_empty=False)
     title = serializers.CharField(max_length=160)
     message = serializers.CharField()
-    type = serializers.ChoiceField(choices=Notification.Type.choices, default=Notification.Type.INFO)
+    type = serializers.CharField(default=Notification.Type.INFO)
+    urgency = serializers.ChoiceField(choices=[("info", "Info"), ("warning", "Warning"), ("critical", "Critical")], default="info")
     project = serializers.IntegerField(required=False)
     task = serializers.IntegerField(required=False)

@@ -4,6 +4,7 @@ export const authApi = {
   login: (payload) => api.post("/auth/login/", payload),
   faceLogin: (formData) => api.post("/auth/face-login/", formData, { headers: { "Content-Type": "multipart/form-data" } }),
   faceEnroll: (formData) => api.post("/auth/face-enroll/", formData, { headers: { "Content-Type": "multipart/form-data" } }),
+  uploadAvatar: (formData) => api.post("/auth/me/avatar/", formData, { headers: { "Content-Type": "multipart/form-data" } }),
   register: (payload) => api.post("/auth/register/", payload, payload instanceof FormData ? { headers: { "Content-Type": "multipart/form-data" } } : undefined),
   me: () => api.get("/auth/me/"),
   updateMe: (payload) => api.patch("/auth/me/", payload)
@@ -138,4 +139,28 @@ export const enterpriseApi = {
   createVoiceIntent: (payload) => api.post("/voice-intents/", payload),
   report: (kind, format = "pdf") => api.get(`/reports/${kind}/`, { params: { format }, responseType: "blob" }),
   reportUrl: (kind, format = "pdf") => `${api.defaults.baseURL}/reports/${kind}/?format=${format}`
+};
+
+export const remoteAccessApi = {
+  dashboard: () => api.get("/remote-devices/dashboard/"),
+  devices: (params) => api.get("/remote-devices/", { params }),
+  createDevice: (payload) => api.post("/remote-devices/", payload),
+  removeDevice: (id) => api.delete(`/remote-devices/${id}/`),
+  connectToken: (payload) => api.post("/remote-devices/connect-token/", payload),
+  requestSession: (deviceId, payload) => api.post(`/remote-devices/${deviceId}/request-session/`, payload),
+  sessions: (params) => api.get("/remote-sessions/", { params }),
+  disconnect: (sessionId) => api.post(`/remote-sessions/${sessionId}/disconnect/`),
+  command: (sessionId, payload) => api.post(`/remote-sessions/${sessionId}/command/`, payload),
+  files: (sessionId, payload) => api.post(`/remote-sessions/${sessionId}/files/`, payload),
+  transfers: (params) => api.get("/remote-transfers/", { params }),
+  createTransfer: (payload) => api.post("/remote-transfers/", payload),
+  initiateUpload: (payload) => api.post("/remote-transfers/uploads/initiate/", payload),
+  uploadChunk: (transferId, formData, config = {}) => api.post(`/remote-transfers/${transferId}/upload-chunk/`, formData, {
+    ...config,
+    headers: { "Content-Type": "multipart/form-data", ...(config.headers || {}) }
+  }),
+  uploadStatus: (transferId) => api.get(`/remote-transfers/${transferId}/upload-status/`),
+  downloadTransfer: (transferId, config = {}) => api.get(`/remote-transfers/${transferId}/download/`, { ...config, responseType: "blob" }),
+  transferDownloadUrl: (transferId) => `${api.defaults.baseURL}/remote-transfers/${transferId}/download/`,
+  logs: (params) => api.get("/remote-logs/", { params })
 };

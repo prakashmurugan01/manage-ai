@@ -14,10 +14,16 @@ from rest_framework.views import APIView
 from apps.core.permissions import IsAdminLevel, Roles, has_role, is_admin_level
 from apps.deployments.models import DeploymentControl
 from apps.documents.models import Document
+from apps.api_keys.models import ApiKeyUsageLog
+from apps.file_tracking.models import FileTransfer
+from apps.hosting.models import HostedProject
+from apps.notifications.models import Notification
 from apps.notifications.services import notify_user
 from apps.projects.models import Project
+from apps.server_monitor.models import Server
 from apps.tasks.models import Task
 from apps.tickets.models import Ticket
+from apps.webhooks.models import Event
 
 from .models import (
     APIKey,
@@ -895,3 +901,191 @@ class SettingsDashboardView(APIView):
             },
             "recent_audit_logs": SystemSettingsAuditLogSerializer(audit_logs, many=True, context={"request": request}).data,
         })
+
+
+class ManagementEngineDashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        today = timezone.localdate()
+        hosted = HostedProject.objects.prefetch_related("hosting_links").order_by("expiry_date", "name")
+        projects = Project.objects.order_by("-updated_at")
+        tickets = Ticket.objects.select_related("project").order_by("-updated_at")
+        servers = Server.objects.prefetch_related("metrics", "disk_mounts").order_by("name")
+        api_logs = ApiKeyUsageLog.objects.select_related("api_key", "api_key__project").order_by("-timestamp")[:30]
+        events = Event.objects.filter(event_type__startswith="external_issue").order_by("-created_at")[:30]
+        transfers = FileTransfer.objects.order_by("-created_at")[:20]
+        notifications = Notification.objects.filter(recipient=request.user).order_by("-created_at")[:20]
+
+        hosting_rows = []
+        expiry_alerts = []
+        for item in hosted[:80]:
+            days = (item.expiry_date - today).days if item.expiry_date else None
+            alert_level = _expiry_alert_level(days)
+            if alert_level:
+                expiry_alerts.append({"project": item.name, "domain": item.domain, "days_remaining": days, "level": alert_level})
+            hosting_rows.append({
+                "id": item.id,
+                "name": item.name,
+                "domain": item.domain,
+                "live_url": item.deploy_url,
+                "provider": item.hosting_platform,
+                "status": item.server_status,
+                "project_status": item.status,
+                "uptime": float(item.uptime_percentage or 0),
+                "response_time_ms": item.response_time_ms,
+                "expiry_date": item.expiry_date,
+                "days_remaining": days,
+                "links": [
+                    {
+                        "id": link.id,
+                        "provider": link.provider,
+                        "url": link.url,
+                        "status": link.status,
+                        "health": link.health_status,
+                        "priority": link.priority,
+                        "is_active": link.is_active,
+                        "is_enabled": link.is_enabled,
+                    }
+                    for link in item.hosting_links.all()
+                ],
+            })
+
+        server_rows = []
+        for server in servers[:30]:
+            metric = server.metrics.first()
+            server_rows.append({
+                "id": server.id,
+                "name": server.name,
+                "ip_address": server.ip_address,
+                "status": server.status,
+                "is_enabled": server.is_enabled,
+                "cpu": getattr(metric, "cpu_percent", 0) if metric else 0,
+                "memory": getattr(metric, "memory_percent", 0) if metric else 0,
+                "disk": getattr(metric, "disk_percent", 0) if metric else 0,
+                "upload_bytes": getattr(metric, "network_bytes_sent", 0) if metric else 0,
+                "download_bytes": getattr(metric, "network_bytes_recv", 0) if metric else 0,
+                "recorded_at": getattr(metric, "recorded_at", None) if metric else None,
+            })
+
+        open_ticket_statuses = {
+            Ticket.Status.NEW,
+            Ticket.Status.OPEN,
+            Ticket.Status.ASSIGNED,
+            Ticket.Status.IN_PROGRESS,
+            Ticket.Status.PENDING,
+            Ticket.Status.TRIAGED,
+        }
+        return Response({
+            "success": True,
+            "status": "running",
+            "data": {
+                "summary": {
+                    "hosting_total": hosted.count(),
+                    "hosting_down": hosted.filter(server_status=HostedProject.ServerStatus.OFFLINE).count(),
+                    "hosting_expiring": len(expiry_alerts),
+                    "projects_total": projects.count(),
+                    "projects_active": projects.filter(status=Project.Status.ACTIVE).count(),
+                    "tickets_open": tickets.filter(status__in=open_ticket_statuses).count(),
+                    "servers_down": servers.filter(status=Server.Status.DOWN).count(),
+                    "api_requests": ApiKeyUsageLog.objects.count(),
+                    "file_transfers": FileTransfer.objects.count(),
+                    "unread_notifications": Notification.objects.filter(recipient=request.user, is_read=False).count(),
+                },
+                "hosting": hosting_rows,
+                "projects": [
+                    {
+                        "id": item.id,
+                        "name": item.name,
+                        "status": item.status,
+                        "health_score": item.health_score,
+                        "progress": item.progress,
+                        "connection_status": item.connection_status,
+                        "hosted_url": item.hosted_url,
+                        "updated_at": item.updated_at,
+                    }
+                    for item in projects[:40]
+                ],
+                "tickets": [
+                    {
+                        "id": item.id,
+                        "ticket_id": item.ticket_id,
+                        "title": item.title,
+                        "project": item.project.name if item.project_id else "",
+                        "status": item.status,
+                        "priority": item.priority,
+                        "source": item.custom_fields.get("source_platform") or item.source,
+                        "updated_at": item.updated_at,
+                    }
+                    for item in tickets[:40]
+                ],
+                "api_queries": [
+                    {
+                        "id": item.id,
+                        "endpoint": item.endpoint,
+                        "method": item.http_method,
+                        "response_code": item.response_code,
+                        "response_time_ms": item.response_time_ms,
+                        "project": item.api_key.project.name if item.api_key_id and item.api_key and item.api_key.project_id else "",
+                        "source_platform": item.api_key.name if item.api_key_id and item.api_key else "external",
+                        "timestamp": item.timestamp,
+                    }
+                    for item in api_logs
+                ],
+                "external_events": [
+                    {
+                        "id": item.id,
+                        "title": item.payload.get("title") or item.event_type,
+                        "source_platform": item.payload.get("source_platform") or item.source_module,
+                        "status": item.payload.get("ticket_status") or item.payload.get("status", "open"),
+                        "project": item.payload.get("project"),
+                        "project_name": item.payload.get("project_name", ""),
+                        "ticket_id": item.payload.get("ticket_id", ""),
+                        "details": item.payload,
+                        "created_at": item.created_at,
+                    }
+                    for item in events
+                ],
+                "servers": server_rows,
+                "file_transfers": [
+                    {
+                        "id": item.id,
+                        "file_name": item.file_name,
+                        "source": item.source_path,
+                        "destination": item.destination_path,
+                        "status": item.status,
+                        "risk_score": item.risk_score,
+                        "size_bytes": item.size_bytes,
+                        "created_at": item.created_at,
+                    }
+                    for item in transfers
+                ],
+                "notifications": [
+                    {
+                        "id": item.id,
+                        "title": item.title,
+                        "message": item.message,
+                        "type": item.type,
+                        "urgency": item.urgency,
+                        "is_read": item.is_read,
+                        "created_at": item.created_at,
+                    }
+                    for item in notifications
+                ],
+                "expiry_alerts": expiry_alerts,
+            },
+        })
+
+
+def _expiry_alert_level(days):
+    if days is None:
+        return ""
+    if days < 0:
+        return "expired"
+    if days <= 7:
+        return "critical"
+    if days <= 30:
+        return "one_month"
+    if days <= 60:
+        return "two_months"
+    return ""

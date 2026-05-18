@@ -1,43 +1,11 @@
-import { CheckCheck } from "lucide-react";
-import { useEffect, useState } from "react";
-
-import { listFrom } from "../api/client.js";
-import { notificationsApi } from "../api/services.js";
-import Button from "../components/ui/Button.jsx";
-import Page from "../components/ui/Page.jsx";
+import { useMemo, useState } from "react";
+import { api } from "../api/client.js";
+import useNotifications from "../hooks/useNotifications.js";
 
 export default function Notifications() {
-  const [items, setItems] = useState([]);
-
-  useEffect(() => {
-    notificationsApi.list().then((response) => setItems(listFrom(response)));
-  }, []);
-
-  async function markRead(id) {
-    const { data } = await notificationsApi.markRead(id);
-    setItems((current) => current.map((item) => (item.id === id ? data : item)));
-  }
-
-  return (
-    <Page title="Notifications" subtitle="Task assignment, deployment, file, and system messages.">
-      <div className="space-y-3">
-        {items.map((item) => (
-          <div key={item.id} className={`panel flex items-start justify-between gap-4 p-4 ${item.is_read ? "opacity-70" : ""}`}>
-            <div>
-              <p className="font-medium text-white">{item.title}</p>
-              <p className="mt-1 text-sm text-slate-400">{item.message}</p>
-              <p className="mt-2 text-xs text-slate-500">{new Date(item.created_at).toLocaleString()}</p>
-            </div>
-            {!item.is_read && (
-              <Button variant="secondary" onClick={() => markRead(item.id)}>
-                <CheckCheck size={16} />
-                Read
-              </Button>
-            )}
-          </div>
-        ))}
-        {!items.length && <p className="panel p-6 text-sm text-slate-500">No notifications yet.</p>}
-      </div>
-    </Page>
-  );
+  const { notifications, markRead, markAllRead } = useNotifications();
+  const [tab, setTab] = useState("all");
+  const [message, setMessage] = useState("");
+  const filtered = useMemo(() => notifications.filter((n) => tab === "all" || (tab === "unread" && !n.is_read) || n.urgency === tab || n.type?.includes(tab)), [notifications, tab]);
+  return <div className="space-y-5"><div className="flex items-center justify-between"><h1 className="text-2xl font-semibold text-white">Notification Center</h1><button onClick={markAllRead} className="rounded-md bg-cyan-400 px-3 py-2 text-slate-950">Mark all read</button></div><div className="flex flex-wrap gap-2">{["all", "unread", "critical", "expiry", "server", "api"].map((x) => <button key={x} onClick={() => setTab(x)} className={`rounded-md px-3 py-2 text-sm ${tab === x ? "bg-white text-slate-950" : "bg-white/10 text-white"}`}>{x}</button>)}</div><form onSubmit={(e) => { e.preventDefault(); api.post("/notifications/send/", { title: "Manual reminder", message, urgency: "warning" }); setMessage(""); }} className="flex gap-2 rounded-lg border border-white/10 bg-white/[0.04] p-4"><input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Send manual reminder" className="flex-1 rounded-md bg-slate-950 px-3 py-2 text-white" /><button className="rounded-md bg-amber-300 px-3 py-2 text-slate-950">Send</button></form><div className="space-y-3">{filtered.map((n) => <article key={n.id} className={`rounded-lg border-l-4 bg-white/[0.04] p-4 ${n.urgency === "critical" ? "border-red-400" : n.urgency === "warning" ? "border-amber-300" : "border-cyan-300"}`}><div className="flex justify-between gap-3"><div><h2 className="font-semibold text-white">{n.title}</h2><p className="text-sm text-slate-400">{n.message}</p><p className="mt-1 text-xs text-slate-500">{new Date(n.created_at).toLocaleString()}</p></div><button onClick={() => markRead(n.id)} className="text-sm text-cyan-200">{n.is_read ? "Read" : "Mark read"}</button></div></article>)}</div></div>;
 }

@@ -113,6 +113,28 @@ Ticket search uses PostgreSQL full-text ranking with `SearchVector(title, descri
 | PATCH/PUT | `/documents/{id}/` | Update metadata | Super Admin/Admin |
 | DELETE | `/documents/{id}/` | Delete file | Super Admin/Admin |
 
+## Disk-To-Disk File Tracking
+
+Base URL: `/api/v1/file-tracking`
+
+| Method | Endpoint | Purpose | Access |
+|---|---|---|---|
+| GET | `/dashboard/` | Live totals, volume usage, recent transfers, alerts, chart data | Authenticated |
+| GET/POST | `/volumes/` | Manage tracked disks, USB drives, and network volumes | Authenticated |
+| GET/POST | `/transfers/` | List or record source-to-destination file movement | Authenticated |
+| GET | `/transfers/export/?format=csv` | Export transfer logs as CSV | Authenticated |
+| GET | `/events/` | File event stream history | Authenticated |
+| GET | `/alerts/` | Large, sensitive, or unusual file movement alerts | Authenticated |
+| POST | `/alerts/{id}/acknowledge/` | Acknowledge an alert | Authenticated |
+| POST | `/alerts/{id}/resolve/` | Resolve an alert | Authenticated |
+| GET/POST | `/rules/` | Manage deterministic alert rules | Admin |
+
+CLI:
+
+```bash
+python manage.py track_file_transfer --source "C:\Finance\backup.sql" --destination "D:\Archive\backup.sql" --size 2147483648 --process robocopy
+```
+
 ## Notifications
 
 | Method | Endpoint | Purpose | Access |

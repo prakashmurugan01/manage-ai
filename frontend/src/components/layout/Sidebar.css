@@ -1,0 +1,223 @@
+/* ========================================
+   SIDEBAR PREMIUM UI STYLES
+   ======================================== */
+
+
+/* REMOVE TEXT SELECTION HIGHLIGHT */
+
+.app-sidebar {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+}
+
+.app-sidebar * {
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+}
+
+
+/* DISABLE DEFAULT SELECTION COLOR */
+
+.app-sidebar ::selection {
+    background: transparent;
+}
+
+.app-sidebar ::-moz-selection {
+    background: transparent;
+}
+
+
+/* ========================================
+   SCROLLBAR STYLING
+   ======================================== */
+
+.app-sidebar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.app-sidebar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.app-sidebar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+    transition: background 0.3s ease;
+}
+
+.app-sidebar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+
+/* Firefox scrollbar */
+
+.app-sidebar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+
+/* ========================================
+   MENU ITEM ACTIVE STATE
+   ======================================== */
+
+.app-sidebar a.active {
+    position: relative;
+}
+
+
+/* ========================================
+   ICON HOVER GLOW
+   ======================================== */
+
+.app-sidebar a:hover svg {
+    filter: drop-shadow(0 0 8px rgba(124, 58, 237, 0.4));
+    transition: filter 0.25s ease;
+}
+
+.app-sidebar a.active svg {
+    filter: drop-shadow(0 0 12px rgba(124, 58, 237, 0.6));
+}
+
+
+/* ========================================
+   SMOOTH TRANSITIONS
+   ======================================== */
+
+.app-sidebar a {
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.app-sidebar a:hover {
+    transform: translateX(4px);
+}
+
+
+/* ========================================
+   FOCUS STATE (KEYBOARD ACCESSIBILITY)
+   ======================================== */
+
+.app-sidebar a:focus-visible {
+    outline: 2px solid rgba(124, 58, 237, 0.8);
+    outline-offset: 2px;
+}
+
+
+/* ========================================
+   RIPPLE EFFECT (OPTIONAL ENHANCEMENT)
+   ======================================== */
+
+.app-sidebar a::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(circle, rgba(124, 58, 237, 0.3), transparent);
+    border-radius: 12px;
+    transform: translate(-50%, -50%) scale(0);
+    pointer-events: none;
+    opacity: 0;
+}
+
+.app-sidebar a:active::after {
+    animation: ripple 0.6s ease-out;
+}
+
+@keyframes ripple {
+    to {
+        transform: translate(-50%, -50%) scale(4);
+        opacity: 0;
+    }
+}
+
+
+/* ========================================
+   LINK ANIMATIONS
+   ======================================== */
+
+
+/* Prevent text from wiggling */
+
+.app-sidebar a span {
+    transition: color 0.25s ease;
+}
+
+
+/* ========================================
+   USER CARD HOVER STATE
+   ======================================== */
+
+.user-profile-card {
+    transition: all 0.3s ease;
+}
+
+.user-profile-card:hover {
+    border-color: rgba(124, 58, 237, 0.3);
+}
+
+
+/* ========================================
+   AVATAR RING GLOW
+   ======================================== */
+
+.avatar-ring {
+    animation: avatarGlow 2s ease-in-out infinite;
+}
+
+@keyframes avatarGlow {
+    0%,
+    100% {
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2), 0 0 12px rgba(124, 58, 237, 0.3);
+    }
+    50% {
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.4), 0 0 20px rgba(124, 58, 237, 0.5);
+    }
+}
+
+
+/* ========================================
+   DARK MODE ENHANCEMENTS
+   ======================================== */
+
+@media (prefers-color-scheme: dark) {
+    .app-sidebar {
+        background: linear-gradient(180deg, #0B0F19 0%, #111827 100%);
+        color: #E5E7EB;
+    }
+}
+
+
+/* ========================================
+   REDUCED MOTION SUPPORT
+   ======================================== */
+
+@media (prefers-reduced-motion: reduce) {
+    .app-sidebar * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+
+/* ========================================
+   HIGH CONTRAST MODE
+   ======================================== */
+
+@media (prefers-contrast: more) {
+    .app-sidebar a {
+        border: 1px solid transparent;
+    }
+    .app-sidebar a:hover {
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+    .app-sidebar a.active {
+        border-color: #7C3AED;
+    }
+}

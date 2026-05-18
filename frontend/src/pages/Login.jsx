@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import Button from "../components/ui/Button.jsx";
 import FaceCapture from "../components/auth/FaceCapture.jsx";
+import { apiErrorMessage } from "../api/client.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { THEMES, useTheme } from "../context/ThemeContext.jsx";
 
@@ -22,15 +23,19 @@ export default function Login() {
   const [form, setForm] = useState({ email: "super@manageai.local", password: "ManageAI@12345" });
   const [error, setError] = useState("");
   const [faceOpen, setFaceOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   async function submit(event) {
     event.preventDefault();
     setError("");
+    setSubmitting(true);
     try {
       await login(form.email, form.password);
       navigate(location.state?.from?.pathname || "/dashboard", { replace: true });
     } catch (error) {
-      setError(error.response?.data?.detail || "Invalid email or password.");
+      setError(apiErrorMessage(error, "Invalid email or password."));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -65,9 +70,9 @@ export default function Login() {
         <label className="label">Password</label>
         <input className="field mb-4" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
         {error && <p className="mb-4 rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-200">{error}</p>}
-        <Button type="submit" className="w-full">
+        <Button type="submit" disabled={submitting} className="w-full">
           <LogIn size={16} />
-          Sign in
+          {submitting ? "Signing in..." : "Sign in"}
         </Button>
         <Button type="button" variant="secondary" className="mt-3 w-full" onClick={() => setFaceOpen((open) => !open)}>
           <ScanFace size={16} />

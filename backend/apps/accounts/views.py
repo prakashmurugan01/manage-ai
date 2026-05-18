@@ -5,6 +5,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.generics import CreateAPIView, RetrieveUpdateAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -54,11 +55,26 @@ class RegisterView(CreateAPIView):
 class MeView(RetrieveUpdateAPIView):
     serializer_class = UserWriteSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     def get_object(self):
         self.request.user.last_seen_at = timezone.now()
         self.request.user.save(update_fields=["last_seen_at"])
         return self.request.user
+
+
+class AvatarUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+
+    def post(self, request, *args, **kwargs):
+        avatar = request.FILES.get("avatar") or request.FILES.get("image")
+        if not avatar:
+            return Response({"avatar": "Profile image is required."}, status=status.HTTP_400_BAD_REQUEST)
+        user = request.user
+        user.avatar = avatar
+        user.save(update_fields=["avatar"])
+        return Response(UserSerializer(user, context={"request": request}).data)
 
 
 def face_login_available(user=None):

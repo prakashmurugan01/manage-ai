@@ -24,7 +24,7 @@ class NotificationViewSet(AuditModelViewSetMixin, viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def get_queryset(self):
-        return Notification.objects.select_related("recipient", "sender", "project", "task").filter(recipient=self.request.user)
+        return Notification.objects.select_related("recipient", "sender", "project", "task", "hosted_project", "server").filter(recipient=self.request.user)
 
     def perform_create(self, serializer):
         serializer.save(sender=self.request.user)
@@ -35,6 +35,24 @@ class NotificationViewSet(AuditModelViewSetMixin, viewsets.ModelViewSet):
         notification.is_read = True
         notification.save(update_fields=["is_read", "updated_at"])
         return Response(NotificationSerializer(notification, context={"request": request}).data)
+
+    @decorators.action(detail=False, methods=["post"])
+    def mark_all_read(self, request):
+        updated = self.get_queryset().filter(is_read=False).update(is_read=True)
+        return Response({"updated": updated})
+
+    @decorators.action(detail=False, methods=["post"], url_path="send")
+    def send_manual_reminder(self, request):
+        notification = Notification.objects.create(
+            recipient=request.user,
+            sender=request.user,
+            title=request.data.get("title", "Manual reminder"),
+            message=request.data.get("message", ""),
+            type=request.data.get("type", "maintenance"),
+            urgency=request.data.get("urgency", "info"),
+            hosted_project_id=request.data.get("project") or None,
+        )
+        return Response(NotificationSerializer(notification, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
     @decorators.action(detail=False, methods=["post"], permission_classes=[IsAdminLevel])
     def broadcast(self, request):

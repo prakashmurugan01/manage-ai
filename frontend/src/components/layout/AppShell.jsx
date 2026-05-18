@@ -47,7 +47,7 @@ export default function AppShell() {
   }, [user?.role]);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-ink-950 text-slate-100">
+    <div className="relative min-h-screen overflow-hidden bg-[color:var(--page-bg)] text-[color:var(--text)] transition-colors duration-300">
       <div className="pointer-events-none fixed inset-0 animated-grid opacity-35" />
       <div className="pointer-events-none fixed inset-x-0 top-0 h-56 bg-gradient-to-b from-white/8 to-transparent" />
       <Sidebar />

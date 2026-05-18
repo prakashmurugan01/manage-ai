@@ -3,13 +3,17 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 export const THEMES = {
   DARK: "dark",
   LIGHT: "light",
-  WHITE: "white"
+  MOON: "moon",
+  WHITE: "moon"
 };
 
 const ThemeContext = createContext(null);
 
 export function ThemeProvider({ children }) {
-  const [theme, setTheme] = useState(() => localStorage.getItem("theme") || THEMES.DARK);
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem("theme");
+    return saved === "white" ? THEMES.MOON : saved || THEMES.DARK;
+  });
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
