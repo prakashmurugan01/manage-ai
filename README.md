@@ -65,3 +65,53 @@ For a fuller Windows local runbook, see [Deployment guide](docs/DEPLOYMENT.md).
 - [API endpoints](docs/API_ENDPOINTS.md)
 - [Deployment guide](docs/DEPLOYMENT.md)
 # manage-ai
+# Universal Connection Engine
+
+This repository now includes a real-time server and hosting management layer built on Django REST Framework, Channels, Celery, Redis, and a React dashboard.
+
+## Local Setup
+
+Backend:
+
+```bash
+cd backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+redis-server
+python manage.py migrate
+python manage.py seed_data
+python manage.py runserver 8000
+```
+
+Workers:
+
+```bash
+cd backend
+celery -A manage_ai worker -l info
+celery -A manage_ai beat -l info
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Realtime WebSockets:
+
+- `ws://localhost:8000/ws/server-monitor/?token={jwt_token}`
+- `ws://localhost:8000/ws/notifications/?token={jwt_token}`
+- `ws://localhost:8000/ws/api-monitor/?token={jwt_token}`
+
+Primary API routes:
+
+- `/api/servers/`
+- `/api/server-metrics/`
+- `/api/disk-mounts/`
+- `/api/hosting/`
+- `/api/uce-api-keys/`
+- `/api/notifications/`
+# manage-ai-lav
