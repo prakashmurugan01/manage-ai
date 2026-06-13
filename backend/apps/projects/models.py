@@ -2,6 +2,8 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from apps.core.models import UCEModel
+
 
 class TimeStampedModel(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
@@ -37,6 +39,22 @@ class Project(TimeStampedModel):
         SYNCING = "SYNCING", "Syncing"
         DEPLOYING = "DEPLOYING", "Deploying"
         ERROR = "ERROR", "Error"
+
+    class DeploymentStatus(models.TextChoices):
+        NOT_DEPLOYED = "NOT_DEPLOYED", "Not deployed"
+        QUEUED = "QUEUED", "Queued"
+        RUNNING = "RUNNING", "Running"
+        DEPLOYED = "DEPLOYED", "Deployed"
+        FAILED = "FAILED", "Failed"
+        ROLLED_BACK = "ROLLED_BACK", "Rolled back"
+
+    class SystemStatus(models.TextChoices):
+        HEALTHY = "HEALTHY", "Healthy"
+        WARNING = "WARNING", "Warning"
+        DEGRADED = "DEGRADED", "Degraded"
+        DOWN = "DOWN", "Down"
+        EXPIRED = "EXPIRED", "Expired"
+        MAINTENANCE = "MAINTENANCE", "Maintenance"
 
     class ApprovalStatus(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
@@ -77,6 +95,26 @@ class Project(TimeStampedModel):
     connection_status_message = models.TextField(blank=True)
     local_url = models.URLField(blank=True)
     hosted_url = models.URLField(blank=True)
+    hosted_project = models.OneToOneField("hosting.HostedProject", related_name="management_project", on_delete=models.SET_NULL, blank=True, null=True)
+    project_type = models.CharField(max_length=80, blank=True)
+    hosting_provider = models.CharField(max_length=80, blank=True)
+    hosting_package = models.CharField(max_length=120, blank=True)
+    server_details = models.JSONField(default=dict, blank=True)
+    domain_name = models.CharField(max_length=255, blank=True, db_index=True)
+    ssl_info = models.JSONField(default=dict, blank=True)
+    hosting_start_date = models.DateField(blank=True, null=True)
+    hosting_expiry_date = models.DateField(blank=True, null=True, db_index=True)
+    domain_expiry_date = models.DateField(blank=True, null=True, db_index=True)
+    renewal_date = models.DateField(blank=True, null=True, db_index=True)
+    project_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    hosting_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    renewal_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    latest_deployment_status = models.CharField(max_length=32, choices=DeploymentStatus.choices, default=DeploymentStatus.NOT_DEPLOYED)
+    latest_deployment_at = models.DateTimeField(blank=True, null=True)
+    latest_deployment_url = models.URLField(blank=True)
+    system_status = models.CharField(max_length=32, choices=SystemStatus.choices, default=SystemStatus.HEALTHY)
+    uptime_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=100)
+    lifecycle_metadata = models.JSONField(default=dict, blank=True)
     github_owner = models.CharField(max_length=120, blank=True)
     github_repo = models.CharField(max_length=160, blank=True)
     github_default_branch = models.CharField(max_length=120, blank=True, default="main")
@@ -134,3 +172,77 @@ class ProjectCommit(TimeStampedModel):
     def __str__(self):
         short_sha = self.sha[:7] if self.sha else "commit"
         return f"{self.project.name} {short_sha}"
+
+
+class UCEProject(UCEModel):
+    name = models.CharField(max_length=180, db_index=True)
+    client = models.ForeignKey("crm.Company", related_name="uce_projects", on_delete=models.SET_NULL, null=True, blank=True, db_index=True)
+    status = models.CharField(max_length=40, default="active", db_index=True)
+    budget = models.DecimalField(max_digits=14, decimal_places=2, default=0, db_index=True)
+    actual_cost = models.DecimalField(max_digits=14, decimal_places=2, default=0, db_index=True)
+    start_date = models.DateField(null=True, blank=True, db_index=True)
+    deadline = models.DateField(null=True, blank=True, db_index=True)
+    progress = models.PositiveSmallIntegerField(default=0, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "uce_project"
+        ordering = ["deadline", "name"]
+        indexes = [
+            models.Index(fields=["status", "deadline"]),
+            models.Index(fields=["budget", "actual_cost"]),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class UCEMilestone(UCEModel):
+    project = models.ForeignKey("projects.UCEProject", related_name="milestones", on_delete=models.CASCADE, db_index=True)
+    title = models.CharField(max_length=180, db_index=True)
+    due_date = models.DateField(db_index=True)
+    completed = models.BooleanField(default=False, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "uce_milestone"
+        ordering = ["due_date"]
+
+    def __str__(self):
+        return self.title
+
+
+class UCETask(UCEModel):
+    project = models.ForeignKey("projects.UCEProject", related_name="uce_tasks", on_delete=models.CASCADE, db_index=True)
+    milestone = models.ForeignKey("projects.UCEMilestone", related_name="tasks", on_delete=models.SET_NULL, null=True, blank=True, db_index=True)
+    title = models.CharField(max_length=180, db_index=True)
+    assigned_to = models.ForeignKey("hr.Employee", related_name="project_tasks", on_delete=models.SET_NULL, null=True, blank=True, db_index=True)
+    status = models.CharField(max_length=40, default="todo", db_index=True)
+    priority = models.CharField(max_length=40, default="medium", db_index=True)
+    estimated_hours = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    actual_hours = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "uce_task"
+        ordering = ["priority", "created_at"]
+        indexes = [models.Index(fields=["status", "priority"])]
+
+    def __str__(self):
+        return self.title
+
+
+class UCETimeEntry(UCEModel):
+    task = models.ForeignKey("projects.UCETask", related_name="time_entries", on_delete=models.CASCADE, db_index=True)
+    employee = models.ForeignKey("hr.Employee", related_name="time_entries", on_delete=models.CASCADE, db_index=True)
+    hours = models.DecimalField(max_digits=8, decimal_places=2)
+    date = models.DateField(db_index=True)
+    billable = models.BooleanField(default=True, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "uce_time_entry"
+        ordering = ["-date"]
+
+    def __str__(self):
+        return f"{self.employee} {self.hours}h"

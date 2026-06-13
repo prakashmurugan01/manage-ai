@@ -2,7 +2,14 @@ import react from "eslint-plugin-react";
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**"]
+    ignores: [
+      "dist/**",
+      "node_modules/**",
+      "src/**/*.ts",
+      "src/**/*.tsx",
+      "src/**/* copy*.jsx",
+      "src/**/* copy*.js"
+    ]
   },
   {
     files: ["src/**/*.{js,jsx}"],
@@ -30,6 +37,7 @@ export default [
     },
     rules: {
       ...react.configs.recommended.rules,
+      "react/no-unknown-property": "off",
       "react/prop-types": "off",
       "react/react-in-jsx-scope": "off"
     },

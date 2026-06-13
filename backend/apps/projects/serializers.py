@@ -22,6 +22,8 @@ class ProjectSerializer(serializers.ModelSerializer):
     commit_count = serializers.IntegerField(read_only=True)
     deployment_enabled = serializers.SerializerMethodField()
     latest_commit = serializers.SerializerMethodField()
+    hosting_days_remaining = serializers.SerializerMethodField()
+    hosting_expiry_label = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -65,6 +67,28 @@ class ProjectSerializer(serializers.ModelSerializer):
             "connection_status_message",
             "local_url",
             "hosted_url",
+            "hosted_project",
+            "project_type",
+            "hosting_provider",
+            "hosting_package",
+            "server_details",
+            "domain_name",
+            "ssl_info",
+            "hosting_start_date",
+            "hosting_expiry_date",
+            "domain_expiry_date",
+            "renewal_date",
+            "project_cost",
+            "hosting_cost",
+            "renewal_cost",
+            "latest_deployment_status",
+            "latest_deployment_at",
+            "latest_deployment_url",
+            "system_status",
+            "uptime_percentage",
+            "lifecycle_metadata",
+            "hosting_days_remaining",
+            "hosting_expiry_label",
             "github_owner",
             "github_repo",
             "github_default_branch",
@@ -98,6 +122,8 @@ class ProjectSerializer(serializers.ModelSerializer):
             "last_commit_message",
             "last_commit_author",
             "last_commit_at",
+            "hosting_days_remaining",
+            "hosting_expiry_label",
             "created_at",
             "updated_at",
         )
@@ -121,6 +147,29 @@ class ProjectSerializer(serializers.ModelSerializer):
         if not commit:
             return None
         return ProjectCommitSerializer(commit).data
+
+    def get_hosting_days_remaining(self, obj):
+        if not obj.hosting_expiry_date:
+            return None
+        from django.utils import timezone
+
+        return (obj.hosting_expiry_date - timezone.localdate()).days
+
+    def get_hosting_expiry_label(self, obj):
+        days = self.get_hosting_days_remaining(obj)
+        if days is None:
+            return ""
+        if days < 0:
+            return "Expired"
+        if days == 0:
+            return "Expired"
+        if days == 1:
+            return "Expires Tomorrow"
+        thresholds = [3, 5, 7, 15, 30]
+        for threshold in thresholds:
+            if days <= threshold:
+                return f"Expires in {threshold} Days"
+        return f"Expires in {days} Days"
 
     def validate(self, attrs):
         client = attrs.get("client", getattr(self.instance, "client", None))

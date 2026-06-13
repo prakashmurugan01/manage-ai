@@ -1,12 +1,9 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity, Mic, MicOff, Minus, Network, Plus, Power, Server, Wifi, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Activity, Mic, MicOff, Network, Wifi, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { api } from "../../api/client.js";
 import { enterpriseApi } from "../../api/services.js";
-import { useAuth } from "../../context/AuthContext.jsx";
-import { canManage } from "../../utils/rbac.js";
 
 function useVoiceCommands() {
   const navigate = useNavigate();
@@ -81,77 +78,162 @@ function MiniGraph({ values = [] }) {
   );
 }
 
+const DOWNLOAD_PROBE_BYTES = 96 * 1024;
+const UPLOAD_PROBE_BYTES = 48 * 1024;
+const SAMPLE_LIMIT = 48;
+const CLOSED_SAMPLE_MS = 2000;
+const OPEN_SAMPLE_MS = 1000;
+const UPLOAD_PROBE_PAYLOAD = "0".repeat(UPLOAD_PROBE_BYTES);
+
+function numeric(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function roundMetric(value) {
+  return Math.round(numeric(value) * 100) / 100;
+}
+
+function metricText(value) {
+  const parsed = numeric(value);
+  if (parsed >= 100) return String(Math.round(parsed));
+  if (parsed >= 10) return parsed.toFixed(1).replace(/\.0$/, "");
+  return parsed.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function mbpsFromBytes(bytes, elapsedMs) {
+  if (!bytes || !elapsedMs) return 0;
+  return roundMetric((bytes * 8) / (elapsedMs / 1000) / 1000000);
+}
+
+function getConnection() {
+  return navigator.connection || navigator.mozConnection || navigator.webkitConnection || {};
+}
+
+function secondsAgo(value) {
+  if (!value) return "starting";
+  const seconds = Math.max(0, Math.round((Date.now() - value) / 1000));
+  return seconds <= 1 ? "now" : `${seconds}s ago`;
+}
+
+function DetailMetric({ label, value }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
+      <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className="mt-2 truncate text-sm font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+async function timedRequest(factory) {
+  const started = performance.now();
+  const response = await factory();
+  return { response, elapsed: Math.max(1, performance.now() - started) };
+}
+
 export default function EnterpriseControls() {
-  const { user } = useAuth();
   const voice = useVoiceCommands();
   const [networkOpen, setNetworkOpen] = useState(false);
-  const [serverOpen, setServerOpen] = useState(false);
   const [samples, setSamples] = useState([]);
-  const [server, setServer] = useState(null);
+  const [networkState, setNetworkState] = useState({
+    online: typeof navigator === "undefined" ? true : navigator.onLine !== false,
+    loading: false,
+    lastUpdated: null,
+    source: "warming up",
+    error: ""
+  });
+  const sampleSequence = useRef(0);
+
+  const sampleNetwork = useCallback(async () => {
+    const sequence = sampleSequence.current + 1;
+    sampleSequence.current = sequence;
+    const connection = getConnection();
+    const online = typeof navigator === "undefined" ? true : navigator.onLine !== false;
+    setNetworkState((state) => ({ ...state, online, loading: true, error: "" }));
+
+    const browserDownload = roundMetric(connection.downlink || 0);
+    const browserUpload = browserDownload ? roundMetric(browserDownload * 0.42) : 0;
+    const browserLatency = Math.max(0, Math.round(connection.rtt || 0));
+
+    const [liveResult, downloadResult, uploadResult] = await Promise.allSettled([
+      timedRequest(() => enterpriseApi.networkLive()),
+      timedRequest(() => enterpriseApi.networkProbeDownload(DOWNLOAD_PROBE_BYTES)),
+      timedRequest(() => enterpriseApi.networkProbeUpload(UPLOAD_PROBE_PAYLOAD))
+    ]);
+
+    if (sampleSequence.current !== sequence) return;
+
+    const liveSample = liveResult.status === "fulfilled" ? liveResult.value : null;
+    const downloadSample = downloadResult.status === "fulfilled" ? downloadResult.value : null;
+    const uploadSample = uploadResult.status === "fulfilled" ? uploadResult.value : null;
+    const serverCurrent = liveSample?.response?.data?.current || {};
+    const downloadBytes = numeric(downloadSample?.response?.data?.bytes, DOWNLOAD_PROBE_BYTES);
+    const uploadBytes = numeric(uploadSample?.response?.data?.bytes, UPLOAD_PROBE_BYTES);
+    const measuredDownload = mbpsFromBytes(downloadBytes, downloadSample?.elapsed || 0);
+    const measuredUpload = mbpsFromBytes(uploadBytes, uploadSample?.elapsed || 0);
+    const latencyCandidates = [liveSample?.elapsed, downloadSample?.elapsed, uploadSample?.elapsed].filter(Boolean);
+    const measuredLatency = latencyCandidates.length ? Math.round(Math.min(...latencyCandidates)) : 0;
+
+    const nextSample = {
+      at: Date.now(),
+      online,
+      download: measuredDownload || browserDownload || numeric(serverCurrent.download_mbps),
+      upload: measuredUpload || browserUpload || numeric(serverCurrent.upload_mbps),
+      latency: measuredLatency || browserLatency || numeric(serverCurrent.latency_ms),
+      serverDownload: numeric(serverCurrent.download_mbps),
+      serverUpload: numeric(serverCurrent.upload_mbps),
+      browserDownload,
+      browserUpload,
+      packetLoss: numeric(serverCurrent.packet_loss_percent),
+      rps: numeric(serverCurrent.requests_per_second),
+      health: numeric(serverCurrent.health_score, online ? 100 : 0)
+    };
+
+    setSamples((items) => [...items.slice(-(SAMPLE_LIMIT - 1)), nextSample]);
+    setNetworkState({
+      online,
+      loading: false,
+      lastUpdated: nextSample.at,
+      source: measuredDownload || measuredUpload ? "live probe" : liveSample ? "server feed" : "browser estimate",
+      error: liveResult.status === "rejected" && downloadResult.status === "rejected" && uploadResult.status === "rejected" ? "Live network fetch failed." : ""
+    });
+  }, []);
 
   useEffect(() => {
-    if (!networkOpen) return undefined;
-    let active = true;
-
-    async function sampleNetwork() {
-      const start = performance.now();
-      try {
-        await api.get("/analytics/performance/?days=1");
-      } catch {
-        // The panel still shows browser-level estimates if the API sample fails.
-      }
-      const latency = Math.max(1, Math.round(performance.now() - start));
-      const connection = navigator.connection || {};
-      const downlink = Number(connection.downlink || 80);
-      const upload = Math.max(8, Math.round(downlink * 0.42));
-      if (active) {
-        setSamples((items) => [...items.slice(-17), { latency, download: Math.round(downlink * 100) / 100, upload }]);
-      }
-    }
-
     sampleNetwork();
-    const timer = window.setInterval(sampleNetwork, 3000);
+    const timer = window.setInterval(sampleNetwork, networkOpen ? OPEN_SAMPLE_MS : CLOSED_SAMPLE_MS);
     return () => {
-      active = false;
       window.clearInterval(timer);
     };
-  }, [networkOpen]);
+  }, [networkOpen, sampleNetwork]);
 
   useEffect(() => {
-    if (!serverOpen || !canManage(user)) return undefined;
-    let active = true;
-
-    async function loadServer() {
-      const { data } = await enterpriseApi.serverLive();
-      if (active) setServer(data);
-    }
-
-    loadServer();
-    const timer = window.setInterval(loadServer, 5000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
+    const connection = getConnection();
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") sampleNetwork();
     };
-  }, [serverOpen, user]);
-
-  async function controlServer(payload) {
-    if (!server?.id) return;
-    const { data } = await enterpriseApi.controlServer(server.id, payload);
-    setServer(data);
-  }
+    window.addEventListener("online", sampleNetwork);
+    window.addEventListener("offline", sampleNetwork);
+    window.addEventListener("focus", sampleNetwork);
+    document.addEventListener("visibilitychange", handleVisibility);
+    connection.addEventListener?.("change", sampleNetwork);
+    return () => {
+      window.removeEventListener("online", sampleNetwork);
+      window.removeEventListener("offline", sampleNetwork);
+      window.removeEventListener("focus", sampleNetwork);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      connection.removeEventListener?.("change", sampleNetwork);
+    };
+  }, [sampleNetwork]);
 
   const current = samples[samples.length - 1] || { latency: 0, download: 0, upload: 0 };
 
   return (
     <div className="relative flex items-center gap-2">
-      <button type="button" onClick={() => setNetworkOpen(true)} className="theme-control rounded-lg p-2 text-slate-300 transition hover:text-white" aria-label="Open network speed monitor">
+      <button type="button" onClick={() => { setNetworkOpen(true); sampleNetwork(); }} className="theme-control relative rounded-lg p-2 text-slate-300 transition hover:text-white" aria-label="Open network speed monitor">
         <Network size={18} />
+        <span className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full ${networkState.online ? "bg-teal-300" : "bg-rose-400"}`} />
       </button>
-      {canManage(user) && (
-        <button type="button" onClick={() => setServerOpen(true)} className="theme-control rounded-lg p-2 text-slate-300 transition hover:text-white" aria-label="Open server control">
-          <Server size={18} />
-        </button>
-      )}
       <button type="button" onClick={voice.listening ? voice.stop : voice.start} className={`theme-control rounded-lg p-2 transition ${voice.listening ? "text-rose-200" : "text-slate-300 hover:text-white"}`} aria-label="Toggle voice assistant">
         {voice.listening ? <MicOff size={18} /> : <Mic size={18} />}
       </button>
@@ -170,51 +252,25 @@ export default function EnterpriseControls() {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 className="text-base font-semibold text-white">Network Speed Monitor</h2>
-                  <p className="mt-1 text-sm text-slate-500">Live upload, download, latency, and connection graph.</p>
+                  <p className="mt-1 text-sm text-slate-500">{networkState.online ? "Online" : "Offline"} - {networkState.source} - updated {secondsAgo(networkState.lastUpdated)}</p>
                 </div>
                 <button type="button" onClick={() => setNetworkOpen(false)} className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Close network monitor"><X size={18} /></button>
               </div>
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><Wifi className="text-teal-200" size={18} /><p className="mt-3 text-2xl font-semibold text-white">{current.download}</p><p className="text-xs text-slate-500">Mbps download</p></div>
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><Activity className="text-sky-300" size={18} /><p className="mt-3 text-2xl font-semibold text-white">{current.upload}</p><p className="text-xs text-slate-500">Mbps upload</p></div>
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><Network className="text-amber-200" size={18} /><p className="mt-3 text-2xl font-semibold text-white">{current.latency}</p><p className="text-xs text-slate-500">ms latency</p></div>
+                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><Wifi className="text-teal-200" size={18} /><p className="mt-3 text-2xl font-semibold text-white">{metricText(current.download)}</p><p className="text-xs text-slate-500">Mbps download</p></div>
+                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><Activity className="text-sky-300" size={18} /><p className="mt-3 text-2xl font-semibold text-white">{metricText(current.upload)}</p><p className="text-xs text-slate-500">Mbps upload</p></div>
+                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><Network className="text-amber-200" size={18} /><p className="mt-3 text-2xl font-semibold text-white">{Math.round(numeric(current.latency))}</p><p className="text-xs text-slate-500">ms latency</p></div>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-4">
+                <DetailMetric label="Server feed" value={`${metricText(current.serverDownload)} / ${metricText(current.serverUpload)} Mbps`} />
+                <DetailMetric label="Browser link" value={`${metricText(current.browserDownload)} / ${metricText(current.browserUpload)} Mbps`} />
+                <DetailMetric label="Packet loss" value={`${metricText(current.packetLoss)}%`} />
+                <DetailMetric label="Health" value={`${Math.round(numeric(current.health))}%`} />
               </div>
               <div className="mt-5 rounded-lg border border-white/10 bg-white/[0.035] p-4">
                 <MiniGraph values={samples.map((item) => item.download)} />
               </div>
-            </motion.div>
-          </motion.div>
-        )}
-
-        {serverOpen && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 bg-black/70 p-4">
-            <motion.div initial={{ opacity: 0, y: 16, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12, scale: 0.98 }} className="mx-auto mt-16 max-w-2xl rounded-lg border border-white/10 bg-[color:var(--app-bg)] p-5 shadow-2xl">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold text-white">Server Control Center</h2>
-                  <p className="mt-1 text-sm text-slate-500">Storage, files, active users, requests, uptime, health, and scale control.</p>
-                </div>
-                <button type="button" onClick={() => setServerOpen(false)} className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white" aria-label="Close server control"><X size={18} /></button>
-              </div>
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><p className="text-xs uppercase tracking-[0.14em] text-slate-500">Health</p><p className="mt-3 text-xl font-semibold text-white">{server?.health || "Loading"}</p></div>
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><p className="text-xs uppercase tracking-[0.14em] text-slate-500">Storage</p><p className="mt-3 text-xl font-semibold text-white">{server?.storage_percent || 0}%</p></div>
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><p className="text-xs uppercase tracking-[0.14em] text-slate-500">Active Users</p><p className="mt-3 text-xl font-semibold text-white">{server?.active_users || 0}</p></div>
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><p className="text-xs uppercase tracking-[0.14em] text-slate-500">Files</p><p className="mt-3 text-xl font-semibold text-white">{server?.file_count || 0}</p></div>
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><p className="text-xs uppercase tracking-[0.14em] text-slate-500">Incoming</p><p className="mt-3 text-xl font-semibold text-white">{server?.incoming_requests || 0}</p></div>
-                <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4"><p className="text-xs uppercase tracking-[0.14em] text-slate-500">Outgoing</p><p className="mt-3 text-xl font-semibold text-white">{server?.outgoing_requests || 0}</p></div>
-              </div>
-              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.035] p-4">
-                <div>
-                  <p className="text-sm font-medium text-white">Server {server?.is_enabled ? "ON" : "OFF"}</p>
-                  <p className="mt-1 text-xs text-slate-500">Scale units: {server?.scale_units || 1}</p>
-                </div>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => controlServer({ is_enabled: !server?.is_enabled })} className="inline-flex items-center gap-2 rounded-lg bg-white/10 px-3 py-2 text-sm text-white hover:bg-white/15"><Power size={16} />Toggle</button>
-                  <button type="button" onClick={() => controlServer({ scale_units: Math.max(1, (server?.scale_units || 1) - 1) })} className="rounded-lg bg-white/10 p-2 text-white hover:bg-white/15" aria-label="Scale down"><Minus size={16} /></button>
-                  <button type="button" onClick={() => controlServer({ scale_units: (server?.scale_units || 1) + 1 })} className="rounded-lg bg-white/10 p-2 text-white hover:bg-white/15" aria-label="Scale up"><Plus size={16} /></button>
-                </div>
-              </div>
+              {networkState.error && <p className="mt-3 rounded-lg border border-rose-400/20 bg-rose-500/10 p-3 text-sm text-rose-100">{networkState.error}</p>}
             </motion.div>
           </motion.div>
         )}

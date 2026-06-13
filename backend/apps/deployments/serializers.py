@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.accounts.serializers import UserSerializer
 
-from .models import DeploymentControl, DeploymentHistory
+from .models import DeploymentControl, DeploymentHistory, DeploymentRecord
 
 
 class DeploymentHistorySerializer(serializers.ModelSerializer):
@@ -47,3 +47,15 @@ class DeploymentToggleSerializer(serializers.Serializer):
     source_branch = serializers.CharField(required=False, allow_blank=True, max_length=120)
     commit_sha = serializers.CharField(required=False, allow_blank=True, max_length=80)
     notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class DeploymentRecordSerializer(serializers.ModelSerializer):
+    project_detail_name = serializers.CharField(source="project.name", read_only=True)
+    hosted_project_name = serializers.CharField(source="hosted_project.name", read_only=True)
+    assigned_developer_detail = UserSerializer(source="assigned_developer", read_only=True)
+    created_by_detail = UserSerializer(source="created_by", read_only=True)
+
+    class Meta:
+        model = DeploymentRecord
+        fields = "__all__"
+        read_only_fields = ("created_at", "updated_at")

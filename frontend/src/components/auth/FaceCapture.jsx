@@ -7,7 +7,7 @@ function canvasToBlob(canvas) {
   return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
 }
 
-export default function FaceCapture({ email, mode = "login", onSubmit }) {
+export default function FaceCapture({ email, mode = "login", onSubmit, startLabel = "Camera", submitLabel = "Enroll face", autoStart = false }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const [active, setActive] = useState(false);
@@ -17,7 +17,10 @@ export default function FaceCapture({ email, mode = "login", onSubmit }) {
 
   const steps = mode === "enroll" ? ["Front", "Left", "Right"] : ["Live"];
 
-  useEffect(() => () => stopCamera(), []);
+  useEffect(() => {
+    if (autoStart) startCamera();
+    return () => stopCamera();
+  }, []);
 
   async function startCamera() {
     setError("");
@@ -115,10 +118,10 @@ export default function FaceCapture({ email, mode = "login", onSubmit }) {
       </div>
       {error && <p className="mt-3 rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-sm text-rose-200">{error}</p>}
       <div className="mt-3 flex flex-wrap gap-2">
-        {!active && <Button variant="secondary" onClick={startCamera}><Camera size={16} />Camera</Button>}
+        {!active && <Button variant="secondary" onClick={startCamera}><Camera size={16} />{startLabel}</Button>}
         {active && mode === "enroll" && captures.length < 3 && <Button onClick={capture} disabled={busy}><ShieldCheck size={16} />Capture {steps[captures.length]}</Button>}
         {active && mode === "enroll" && captures.length > 0 && <Button variant="secondary" onClick={() => setCaptures([])} disabled={busy}><RotateCcw size={16} />Retake</Button>}
-        {mode === "enroll" && captures.length === 3 && <Button onClick={submitEnrollment} disabled={busy}><ShieldCheck size={16} />Enroll face</Button>}
+        {mode === "enroll" && captures.length === 3 && <Button onClick={submitEnrollment} disabled={busy}><ShieldCheck size={16} />{submitLabel}</Button>}
         {active && mode !== "enroll" && <Button onClick={capture} disabled={busy}><ShieldCheck size={16} />Unlock</Button>}
         <label className="btn-secondary inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm font-medium text-slate-100 transition hover:bg-white/15">
           <Upload size={16} />

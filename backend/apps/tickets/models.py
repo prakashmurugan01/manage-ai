@@ -45,6 +45,7 @@ class Ticket(TimeStampedModel):
         NEW = "NEW", "New"
         ASSIGNED = "ASSIGNED", "Assigned"
         IN_PROGRESS = "IN_PROGRESS", "In Progress"
+        TESTING = "TESTING", "Testing"
         PENDING = "PENDING", "Pending"
         RESOLVED = "RESOLVED", "Resolved"
         CLOSED = "CLOSED", "Closed"
@@ -95,6 +96,7 @@ class Ticket(TimeStampedModel):
     source = models.CharField(max_length=32, choices=Source.choices, default=Source.CLIENT)
     auto_assigned = models.BooleanField(default=False)
     assignment_reason = models.CharField(max_length=240, blank=True)
+    resolution_notes = models.TextField(blank=True)
     first_response_at = models.DateTimeField(blank=True, null=True)
     resolved_at = models.DateTimeField(blank=True, null=True)
     closed_at = models.DateTimeField(blank=True, null=True)
@@ -167,7 +169,7 @@ class Ticket(TimeStampedModel):
         if not self.ticket_id:
             self.assign_ticket_id()
         now = timezone.now()
-        if self.status in {self.Status.ASSIGNED, self.Status.IN_PROGRESS} and not self.first_response_at:
+        if self.status in {self.Status.ASSIGNED, self.Status.IN_PROGRESS, self.Status.TESTING} and not self.first_response_at:
             self.first_response_at = now
         if self.status in {self.Status.RESOLVED, self.Status.CLOSED} and not self.resolved_at:
             self.resolved_at = now

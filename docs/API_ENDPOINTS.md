@@ -113,6 +113,28 @@ Ticket search uses PostgreSQL full-text ranking with `SearchVector(title, descri
 | PATCH/PUT | `/documents/{id}/` | Update metadata | Super Admin/Admin |
 | DELETE | `/documents/{id}/` | Delete file | Super Admin/Admin |
 
+## Disk-To-Disk File Tracking
+
+Base URL: `/api/v1/file-tracking`
+
+| Method | Endpoint | Purpose | Access |
+|---|---|---|---|
+| GET | `/dashboard/` | Live totals, volume usage, recent transfers, alerts, chart data | Authenticated |
+| GET/POST | `/volumes/` | Manage tracked disks, USB drives, and network volumes | Authenticated |
+| GET/POST | `/transfers/` | List or record source-to-destination file movement | Authenticated |
+| GET | `/transfers/export/?format=csv` | Export transfer logs as CSV | Authenticated |
+| GET | `/events/` | File event stream history | Authenticated |
+| GET | `/alerts/` | Large, sensitive, or unusual file movement alerts | Authenticated |
+| POST | `/alerts/{id}/acknowledge/` | Acknowledge an alert | Authenticated |
+| POST | `/alerts/{id}/resolve/` | Resolve an alert | Authenticated |
+| GET/POST | `/rules/` | Manage deterministic alert rules | Admin |
+
+CLI:
+
+```bash
+python manage.py track_file_transfer --source "C:\Finance\backup.sql" --destination "D:\Archive\backup.sql" --size 2147483648 --process robocopy
+```
+
 ## Notifications
 
 | Method | Endpoint | Purpose | Access |
@@ -129,6 +151,20 @@ Ticket search uses PostgreSQL full-text ranking with `SearchVector(title, descri
 | GET | `/audit-logs/` | Business audit trail | Super Admin |
 | GET | `/api-logs/` | API request logs | Super Admin |
 | GET | `/analytics/performance/` | Latency/error analytics | Authenticated |
+
+## API Key Integration And External Ticket Intake
+
+Detailed integration guide: [`API_INTEGRATION_AUTOMATED_TICKETS.md`](./API_INTEGRATION_AUTOMATED_TICKETS.md)
+
+| Method | Endpoint | Purpose | Access |
+|---|---|---|---|
+| GET/POST | `/uce-api-keys/` | List or generate project-scoped external integration API keys | Authenticated owner/Super Admin |
+| PATCH/PUT | `/uce-api-keys/{id}/` | Update API key role, rate limit, expiry, active state, or IP whitelist | Owner/Super Admin |
+| POST | `/uce-api-keys/{id}/regenerate/` | Rotate an API key and return the new plaintext key once | Owner/Super Admin |
+| POST | `/uce-api-keys/{id}/toggle/` | Enable or disable an API key | Owner/Super Admin |
+| GET | `/uce-api-keys/{id}/details/` | View usage, logs, connected systems, events, and API-created tickets | Owner/Super Admin |
+| GET | `/uce-api-key-logs/` | View API key request logs | Authenticated scoped |
+| POST | `/external/issues/` | Create or update tickets from chatbots, CRM, ERP, webhooks, or external apps | `Authorization: API_KEY <key>` |
 
 ## Analytics Dashboard
 

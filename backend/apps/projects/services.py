@@ -2,6 +2,7 @@ import json
 import re
 import subprocess
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -11,6 +12,8 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.utils.text import slugify
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers
@@ -21,6 +24,181 @@ from apps.notifications.services import notify_user
 
 GITHUB_REPO_RE = re.compile(r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/#?]+)", re.IGNORECASE)
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def expiry_label(expiry_date):
+    if not expiry_date:
+        return ""
+    days = (expiry_date - timezone.localdate()).days
+    if days <= 0:
+        return "Expired"
+    if days == 1:
+        return "Expires Tomorrow"
+    for threshold in (3, 5, 7, 15, 30):
+        if days <= threshold:
+            return f"Expires in {threshold} Days"
+    return f"Expires in {days} Days"
+
+
+def sync_project_from_hosting(hosted_project, actor=None, deployment=None):
+    from .models import Project
+
+    owner = _project_owner(actor)
+    existing = getattr(hosted_project, "management_project", None)
+    if not existing:
+        existing = Project.objects.filter(hosted_project=hosted_project).first()
+    if not existing and hosted_project.domain:
+        existing = Project.objects.filter(domain_name__iexact=hosted_project.domain).first()
+    if not existing and hosted_project.deploy_url:
+        existing = Project.objects.filter(hosted_url__iexact=hosted_project.deploy_url).first()
+
+    if not existing and not owner:
+        return None
+
+    defaults = _project_sync_defaults(hosted_project, actor=actor, deployment=deployment)
+    with transaction.atomic():
+        if existing:
+            project = existing
+            for field, value in defaults.items():
+                setattr(project, field, value)
+            project.save(update_fields=[*defaults.keys(), "updated_at"])
+        else:
+            project = Project.objects.create(
+                name=hosted_project.name,
+                slug=_unique_project_slug(hosted_project.name),
+                owner=owner,
+                created_by=actor if getattr(actor, "is_authenticated", False) else owner,
+                description=hosted_project.notes or f"Hosted project for {hosted_project.domain}",
+                status=Project.Status.ACTIVE,
+                connection_type=Project.ConnectionType.HOSTED,
+                connection_status=Project.ConnectionStatus.CONNECTED,
+                **defaults,
+            )
+    return project
+
+
+def sync_project_deployment(hosted_project, deployment, actor=None):
+    return sync_project_from_hosting(hosted_project, actor=actor or getattr(deployment, "created_by", None), deployment=deployment)
+
+
+def _project_sync_defaults(hosted_project, actor=None, deployment=None):
+    from .models import Project
+
+    domain_status = getattr(hosted_project, "domain_status", None)
+    ssl_info = dict(getattr(domain_status, "metadata", {}) or {})
+    if domain_status:
+        ssl_info.update(
+            {
+                "ssl_status": domain_status.ssl_status,
+                "ssl_expires_at": domain_status.ssl_expires_at.isoformat() if domain_status.ssl_expires_at else None,
+                "mx_status": domain_status.mx_status,
+            }
+        )
+
+    server_details = {
+        "server_ip": str(hosted_project.server_ip or ""),
+        "server_status": hosted_project.server_status,
+        "response_time_ms": hosted_project.response_time_ms,
+        "last_checked_at": hosted_project.last_checked_at.isoformat() if hosted_project.last_checked_at else None,
+        "hosting_platform": hosted_project.hosting_platform,
+    }
+    latest_status = Project.DeploymentStatus.NOT_DEPLOYED
+    latest_at = None
+    latest_url = hosted_project.deploy_url or ""
+    if deployment:
+        latest_status = _deployment_status(deployment.status)
+        latest_at = deployment.completed_at or deployment.created_at
+        latest_url = deployment.live_url or latest_url
+
+    metadata = {
+        "hosting_id": hosted_project.id,
+        "hosting_status": hosted_project.status,
+        "hosting_tag": hosted_project.tag,
+        "link_is_active": hosted_project.link_is_active,
+        "expiry_label": expiry_label(hosted_project.expiry_date),
+        "synced_at": timezone.now().isoformat(),
+        "synced_by": getattr(actor, "id", None),
+    }
+    if deployment:
+        metadata["latest_deployment_id"] = str(deployment.id)
+        metadata["deployment_provider"] = deployment.primary_provider
+        metadata["deployment_progress"] = deployment.progress
+
+    return {
+        "hosted_project": hosted_project,
+        "project_type": getattr(getattr(deployment, "upload", None), "project_type", "") if deployment else "",
+        "hosting_provider": hosted_project.hosting_platform,
+        "hosting_package": hosted_project.tag,
+        "server_details": server_details,
+        "domain_name": hosted_project.domain,
+        "hosted_url": latest_url,
+        "ssl_info": ssl_info,
+        "hosting_start_date": hosted_project.start_date,
+        "hosting_expiry_date": hosted_project.expiry_date,
+        "domain_expiry_date": domain_status.domain_expires_at if domain_status else None,
+        "renewal_date": hosted_project.expiry_date,
+        "hosting_cost": hosted_project.monthly_cost or Decimal("0"),
+        "renewal_cost": hosted_project.monthly_cost or Decimal("0"),
+        "latest_deployment_status": latest_status,
+        "latest_deployment_at": latest_at,
+        "latest_deployment_url": latest_url,
+        "system_status": _system_status(hosted_project),
+        "uptime_percentage": hosted_project.uptime_percentage,
+        "lifecycle_metadata": metadata,
+    }
+
+
+def _project_owner(actor=None):
+    User = get_user_model()
+    if getattr(actor, "is_authenticated", False):
+        return actor
+    return User.objects.filter(is_superuser=True).first() or User.objects.order_by("id").first()
+
+
+def _unique_project_slug(name):
+    from .models import Project
+
+    base = slugify(name)[:180] or "hosted-project"
+    slug = base
+    index = 2
+    while Project.objects.filter(slug=slug).exists():
+        suffix = f"-{index}"
+        slug = f"{base[:200 - len(suffix)]}{suffix}"
+        index += 1
+    return slug
+
+
+def _deployment_status(value):
+    from .models import Project
+
+    normalized = str(value or "").lower()
+    if normalized in {"live", "success", "ready"}:
+        return Project.DeploymentStatus.DEPLOYED
+    if normalized in {"error", "failed"}:
+        return Project.DeploymentStatus.FAILED
+    if normalized in {"queued"}:
+        return Project.DeploymentStatus.QUEUED
+    if normalized in {"uploading", "building", "deploying", "running"}:
+        return Project.DeploymentStatus.RUNNING
+    return Project.DeploymentStatus.NOT_DEPLOYED
+
+
+def _system_status(hosted_project):
+    from .models import Project
+
+    if hosted_project.status == "disabled" or not hosted_project.link_is_active:
+        return Project.SystemStatus.MAINTENANCE
+    if hosted_project.status == "expired":
+        return Project.SystemStatus.EXPIRED
+    if hosted_project.status == "maintenance":
+        return Project.SystemStatus.MAINTENANCE
+    if hosted_project.server_status == "offline":
+        return Project.SystemStatus.DOWN
+    if hosted_project.server_status == "slow" or hosted_project.downtime_count >= 3:
+        return Project.SystemStatus.DEGRADED
+    if hosted_project.expiry_date and (hosted_project.expiry_date - timezone.localdate()).days <= 7:
+        return Project.SystemStatus.WARNING
+    return Project.SystemStatus.HEALTHY
 
 
 class GitHubAPIError(Exception):

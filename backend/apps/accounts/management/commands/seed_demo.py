@@ -135,7 +135,29 @@ class Command(BaseCommand):
                 "is_active": True,
             },
         )
-        if created:
-            user.set_password(password)
-            user.save()
+        update_fields = set()
+        desired = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "role": role,
+            "is_staff": staff,
+            "is_superuser": role == User.Role.SUPER_ADMIN,
+            "is_active": True,
+            "approval_status": User.ApprovalStatus.APPROVED,
+            "rejection_reason": "",
+            "suspended_at": None,
+        }
+        if not User.objects.exclude(pk=user.pk).filter(username=username).exists():
+            desired["username"] = username
+        for field, value in desired.items():
+            if getattr(user, field) != value:
+                setattr(user, field, value)
+                update_fields.add(field)
+        if user.approved_at is None:
+            user.approved_at = timezone.now()
+            update_fields.add("approved_at")
+        user.set_password(password)
+        update_fields.add("password")
+        if update_fields:
+            user.save(update_fields=update_fields)
         return user

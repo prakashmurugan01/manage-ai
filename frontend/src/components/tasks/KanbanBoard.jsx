@@ -44,25 +44,27 @@ export default function KanbanBoard({ tasks = [], onTasksChange, workflowDays })
   }
 
   return (
-    <div className="grid gap-3 overflow-x-auto pb-2 lg:grid-cols-6">
-      {columns.map(([status, label]) => (
-        <section
-          key={status}
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={() => drop(status)}
-          className="min-h-[420px] min-w-64 rounded-lg border border-white/10 bg-white/[0.035] p-3"
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">{label}</h2>
-            <span className="rounded-full bg-white/10 px-2 py-1 text-xs text-slate-400">{grouped[status]?.length || 0}</span>
-          </div>
-          <div className="space-y-3">
-            {grouped[status]?.map((task) => (
-              <TaskCard key={task.id} task={task} workflowDays={maxWorkflowDays} onDragStart={(_, item) => setDragged(item)} onProgressChange={updateWorkflow} />
-            ))}
-          </div>
-        </section>
-      ))}
+    <div className="overflow-x-auto pb-3 scrollbar-thin">
+      <div className="grid grid-flow-col auto-cols-[minmax(17rem,1fr)] gap-3">
+        {columns.map(([status, label]) => (
+          <section
+            key={status}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={() => drop(status)}
+            className="min-h-[420px] rounded-lg border border-white/10 bg-white/[0.035] p-3"
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-white">{label}</h2>
+              <span className="rounded-full bg-white/10 px-2 py-1 text-xs text-slate-400">{grouped[status]?.length || 0}</span>
+            </div>
+            <div className="space-y-3">
+              {grouped[status]?.map((task) => (
+                <TaskCard key={task.id} task={task} workflowDays={maxWorkflowDays} onDragStart={(_, item) => setDragged(item)} onProgressChange={updateWorkflow} />
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

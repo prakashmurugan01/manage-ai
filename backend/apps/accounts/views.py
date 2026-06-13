@@ -5,6 +5,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.generics import CreateAPIView, RetrieveUpdateAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -13,7 +14,7 @@ from apps.core.permissions import IsSuperAdmin, Roles, has_role, is_admin_level
 from apps.enterprise.models import FeatureFlag
 from apps.notifications.services import notify_user
 
-from .face import best_similarity, build_face_profile, image_hash
+from .face import FACE_MATCH_THRESHOLD, best_similarity, build_face_profile
 from .models import Team
 from .serializers import CustomTokenObtainPairSerializer, RegisterSerializer, TeamSerializer, UserSerializer, UserWriteSerializer
 
@@ -45,15 +46,25 @@ class RegisterView(CreateAPIView):
             user.face_hash = hashes[0] if hashes else ""
             user.face_embeddings = hashes
             user.face_security_checks = checks
-            user.face_login_enabled = bool(hashes)
+            user.face_login_enabled = False
             user.face_enrolled_at = timezone.now()
             user.save(update_fields=["face_hash", "face_embeddings", "face_security_checks", "face_login_enabled", "face_enrolled_at"])
+        approvers = User.objects.filter(role__in=[User.Role.ADMIN, User.Role.SUPER_ADMIN], is_active=True).exclude(id=user.id)
+        for approver in approvers:
+            notify_user(
+                approver,
+                "New registration pending approval",
+                f"{user.get_full_name() or user.email} requested {user.get_role_display()} access and is waiting for approval.",
+                type="INFO",
+                urgency="warning",
+            )
         return Response(UserSerializer(user, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
 
 class MeView(RetrieveUpdateAPIView):
     serializer_class = UserWriteSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     def get_object(self):
         self.request.user.last_seen_at = timezone.now()
@@ -61,12 +72,31 @@ class MeView(RetrieveUpdateAPIView):
         return self.request.user
 
 
+class AvatarUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+
+    def post(self, request, *args, **kwargs):
+        avatar = request.FILES.get("avatar") or request.FILES.get("image")
+        if not avatar:
+            return Response({"avatar": "Profile image is required."}, status=status.HTTP_400_BAD_REQUEST)
+        user = request.user
+        user.avatar = avatar
+        user.save(update_fields=["avatar"])
+        return Response(UserSerializer(user, context={"request": request}).data)
+
+
 def face_login_available(user=None):
-    qs = FeatureFlag.objects.filter(key="face_login", is_enabled=True)
     company = getattr(user, "company", None)
+    qs = FeatureFlag.objects.filter(key="face_login")
     if company:
-        qs = qs.filter(company=company) | FeatureFlag.objects.filter(key="face_login", company__isnull=True, is_enabled=True)
-    return qs.exists()
+        company_flag = qs.filter(company=company).order_by("-updated_at").first()
+        if company_flag is not None:
+            return company_flag.is_enabled
+    global_flag = qs.filter(company__isnull=True).order_by("-updated_at").first()
+    if global_flag is not None:
+        return global_flag.is_enabled
+    return True
 
 
 class FaceEnrollView(CreateAPIView):
@@ -108,11 +138,15 @@ class FaceLoginView(CreateAPIView):
         user = User.objects.filter(email__iexact=email, is_active=True).first()
         if not user or not user.face_login_enabled or not user.face_hash:
             return Response({"detail": "Face login is not enrolled for this account."}, status=status.HTTP_403_FORBIDDEN)
+        if user.approval_status == User.ApprovalStatus.PENDING:
+            return Response({"detail": "Your account is pending approval."}, status=status.HTTP_403_FORBIDDEN)
+        if user.approval_status != User.ApprovalStatus.APPROVED:
+            return Response({"detail": "Your account is not approved for access."}, status=status.HTTP_403_FORBIDDEN)
         if not face_login_available(user):
             return Response({"detail": "Face login is disabled by settings."}, status=status.HTTP_403_FORBIDDEN)
         stored_hashes = user.face_embeddings or ([user.face_hash] if user.face_hash else [])
         score = best_similarity(stored_hashes, image)
-        if score < 82:
+        if score < FACE_MATCH_THRESHOLD:
             return Response({"detail": "Face match failed.", "score": score}, status=status.HTTP_403_FORBIDDEN)
         user.last_login = timezone.now()
         user.save(update_fields=["last_login"])
@@ -164,6 +198,10 @@ class UserViewSet(AuditModelViewSetMixin, viewsets.ModelViewSet):
         actor = self.request.user
         role = role or getattr(target_user, "role", None)
         if has_role(actor, Roles.SUPER_ADMIN) or actor.is_superuser:
+            return
+        if target_user and actor.id == target_user.id:
+            if role != target_user.role:
+                raise ValidationError("You cannot change your own role.")
             return
         if has_role(actor, Roles.ADMIN) and role in {Roles.DEVELOPER, Roles.CLIENT}:
             return

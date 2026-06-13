@@ -22,6 +22,9 @@ class UserEventConsumer(AsyncJsonWebsocketConsumer):
     async def project_updated(self, event):
         await self.send_json({"type": event.get("event", "project.updated"), "project": event["project"]})
 
+    async def hosting_event(self, event):
+        await self.send_json({"type": event.get("event", "hosting.project.updated"), "project": event["project"]})
+
     async def task_progress(self, event):
         await self.send_json({"type": "task.progress", "task": event["task"]})
 

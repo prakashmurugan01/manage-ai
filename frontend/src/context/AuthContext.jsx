@@ -56,6 +56,11 @@ export function AuthProvider({ children }) {
     setUser(data.user);
   }
 
+  function updateCurrentUser(nextUser) {
+    localStorage.setItem("user", JSON.stringify(nextUser));
+    setUser(nextUser);
+  }
+
   async function register(payload) {
     const { data } = await authApi.register(payload);
     return data;
@@ -68,7 +73,7 @@ export function AuthProvider({ children }) {
     setUser(null);
   }
 
-  const value = useMemo(() => ({ user, loading, login, faceLogin, register, logout, isAuthenticated: Boolean(user) }), [user, loading]);
+  const value = useMemo(() => ({ user, loading, login, faceLogin, register, logout, updateCurrentUser, isAuthenticated: Boolean(user) }), [user, loading]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -1,3 +1,5 @@
+import socket
+import time
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -11,13 +13,24 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+try:
+    import psutil
+except ImportError:  # pragma: no cover - psutil is optional outside the monitor agent.
+    psutil = None
+
 from apps.core.permissions import IsAdminLevel, Roles, has_role, is_admin_level
 from apps.deployments.models import DeploymentControl
 from apps.documents.models import Document
+from apps.api_keys.models import ApiKeyUsageLog
+from apps.file_tracking.models import FileTransfer
+from apps.hosting.models import HostedProject
+from apps.notifications.models import Notification
 from apps.notifications.services import notify_user
 from apps.projects.models import Project
+from apps.server_monitor.models import Server
 from apps.tasks.models import Task
 from apps.tickets.models import Ticket
+from apps.webhooks.models import Event
 
 from .models import (
     APIKey,
@@ -527,21 +540,90 @@ class NetworkTelemetryViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
     def live(self, request):
         company = scoped_company(request.user) or ensure_company(request.user)
         latest = NetworkTelemetry.objects.filter(company=company).first()
-        seed = timezone.now().second
+        sample = self._sample_network(latest)
         item = NetworkTelemetry.objects.create(
             company=company,
-            upload_mbps=round(22 + seed * 0.9, 2),
-            download_mbps=round(120 + seed * 1.7, 2),
-            latency_ms=18 + seed % 36,
-            packet_loss_percent=round((seed % 4) * 0.03, 2),
-            requests_per_second=round(42 + seed * 1.35, 2),
-            health_score=max(80, 100 - (seed % 18)),
-            source=latest.source if latest else "platform-agent",
+            upload_mbps=sample["upload_mbps"],
+            download_mbps=sample["download_mbps"],
+            latency_ms=sample["latency_ms"],
+            packet_loss_percent=sample["packet_loss_percent"],
+            requests_per_second=sample["requests_per_second"],
+            health_score=sample["health_score"],
+            source=sample["source"],
         )
         history = NetworkTelemetry.objects.filter(company=company)[:24]
         return Response({
             "current": NetworkTelemetrySerializer(item, context={"request": request}).data,
             "history": NetworkTelemetrySerializer(history, many=True, context={"request": request}).data,
+        })
+
+    def _sample_network(self, latest):
+        source = "platform-agent"
+        upload_mbps = Decimal("0.00")
+        download_mbps = Decimal("0.00")
+        latency_ms = 0
+        packet_loss_percent = Decimal("0.00")
+
+        if psutil:
+            before = psutil.net_io_counters()
+            started = time.perf_counter()
+            time.sleep(0.2)
+            after = psutil.net_io_counters()
+            elapsed = max(time.perf_counter() - started, 0.001)
+            upload_mbps = Decimal(str(round(((after.bytes_sent - before.bytes_sent) * 8) / elapsed / 1_000_000, 2)))
+            download_mbps = Decimal(str(round(((after.bytes_recv - before.bytes_recv) * 8) / elapsed / 1_000_000, 2)))
+            source = "server-net-io"
+
+        ping_started = time.perf_counter()
+        try:
+            with socket.create_connection(("1.1.1.1", 443), timeout=0.75):
+                latency_ms = int((time.perf_counter() - ping_started) * 1000)
+        except OSError:
+            latency_ms = int(latest.latency_ms) if latest else 0
+            packet_loss_percent = Decimal("100.00")
+
+        requests_per_second = Decimal("0.00")
+        if latest:
+            age = max((timezone.now() - latest.created_at).total_seconds(), 1)
+            requests_per_second = Decimal(str(round(1 / age, 2)))
+
+        latency_penalty = min(latency_ms / 4, 35)
+        loss_penalty = float(packet_loss_percent) * 0.5
+        health_score = max(0, min(100, int(100 - latency_penalty - loss_penalty)))
+
+        return {
+            "upload_mbps": upload_mbps,
+            "download_mbps": download_mbps,
+            "latency_ms": latency_ms,
+            "packet_loss_percent": packet_loss_percent,
+            "requests_per_second": requests_per_second,
+            "health_score": health_score,
+            "source": source,
+        }
+
+    @decorators.action(detail=False, methods=["get", "post"])
+    def probe(self, request):
+        max_bytes = 256 * 1024
+        default_bytes = 64 * 1024
+        try:
+            requested_bytes = int(request.query_params.get("bytes", default_bytes))
+        except (TypeError, ValueError):
+            requested_bytes = default_bytes
+        requested_bytes = max(1024, min(requested_bytes, max_bytes))
+
+        if request.method == "POST":
+            payload = request.data.get("payload", "")
+            return Response({
+                "ok": True,
+                "bytes": len(str(payload).encode("utf-8")),
+                "server_time": timezone.now().isoformat(),
+            })
+
+        return Response({
+            "ok": True,
+            "bytes": requested_bytes,
+            "payload": "0" * requested_bytes,
+            "server_time": timezone.now().isoformat(),
         })
 
 
@@ -895,3 +977,191 @@ class SettingsDashboardView(APIView):
             },
             "recent_audit_logs": SystemSettingsAuditLogSerializer(audit_logs, many=True, context={"request": request}).data,
         })
+
+
+class ManagementEngineDashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        today = timezone.localdate()
+        hosted = HostedProject.objects.prefetch_related("hosting_links").order_by("expiry_date", "name")
+        projects = Project.objects.order_by("-updated_at")
+        tickets = Ticket.objects.select_related("project").order_by("-updated_at")
+        servers = Server.objects.prefetch_related("metrics", "disk_mounts").order_by("name")
+        api_logs = ApiKeyUsageLog.objects.select_related("api_key", "api_key__project").order_by("-timestamp")[:30]
+        events = Event.objects.filter(event_type__startswith="external_issue").order_by("-created_at")[:30]
+        transfers = FileTransfer.objects.order_by("-created_at")[:20]
+        notifications = Notification.objects.filter(recipient=request.user).order_by("-created_at")[:20]
+
+        hosting_rows = []
+        expiry_alerts = []
+        for item in hosted[:80]:
+            days = (item.expiry_date - today).days if item.expiry_date else None
+            alert_level = _expiry_alert_level(days)
+            if alert_level:
+                expiry_alerts.append({"project": item.name, "domain": item.domain, "days_remaining": days, "level": alert_level})
+            hosting_rows.append({
+                "id": item.id,
+                "name": item.name,
+                "domain": item.domain,
+                "live_url": item.deploy_url,
+                "provider": item.hosting_platform,
+                "status": item.server_status,
+                "project_status": item.status,
+                "uptime": float(item.uptime_percentage or 0),
+                "response_time_ms": item.response_time_ms,
+                "expiry_date": item.expiry_date,
+                "days_remaining": days,
+                "links": [
+                    {
+                        "id": link.id,
+                        "provider": link.provider,
+                        "url": link.url,
+                        "status": link.status,
+                        "health": link.health_status,
+                        "priority": link.priority,
+                        "is_active": link.is_active,
+                        "is_enabled": link.is_enabled,
+                    }
+                    for link in item.hosting_links.all()
+                ],
+            })
+
+        server_rows = []
+        for server in servers[:30]:
+            metric = server.metrics.first()
+            server_rows.append({
+                "id": server.id,
+                "name": server.name,
+                "ip_address": server.ip_address,
+                "status": server.status,
+                "is_enabled": server.is_enabled,
+                "cpu": getattr(metric, "cpu_percent", 0) if metric else 0,
+                "memory": getattr(metric, "memory_percent", 0) if metric else 0,
+                "disk": getattr(metric, "disk_percent", 0) if metric else 0,
+                "upload_bytes": getattr(metric, "network_bytes_sent", 0) if metric else 0,
+                "download_bytes": getattr(metric, "network_bytes_recv", 0) if metric else 0,
+                "recorded_at": getattr(metric, "recorded_at", None) if metric else None,
+            })
+
+        open_ticket_statuses = {
+            Ticket.Status.NEW,
+            Ticket.Status.OPEN,
+            Ticket.Status.ASSIGNED,
+            Ticket.Status.IN_PROGRESS,
+            Ticket.Status.PENDING,
+            Ticket.Status.TRIAGED,
+        }
+        return Response({
+            "success": True,
+            "status": "running",
+            "data": {
+                "summary": {
+                    "hosting_total": hosted.count(),
+                    "hosting_down": hosted.filter(server_status=HostedProject.ServerStatus.OFFLINE).count(),
+                    "hosting_expiring": len(expiry_alerts),
+                    "projects_total": projects.count(),
+                    "projects_active": projects.filter(status=Project.Status.ACTIVE).count(),
+                    "tickets_open": tickets.filter(status__in=open_ticket_statuses).count(),
+                    "servers_down": servers.filter(status=Server.Status.DOWN).count(),
+                    "api_requests": ApiKeyUsageLog.objects.count(),
+                    "file_transfers": FileTransfer.objects.count(),
+                    "unread_notifications": Notification.objects.filter(recipient=request.user, is_read=False).count(),
+                },
+                "hosting": hosting_rows,
+                "projects": [
+                    {
+                        "id": item.id,
+                        "name": item.name,
+                        "status": item.status,
+                        "health_score": item.health_score,
+                        "progress": item.progress,
+                        "connection_status": item.connection_status,
+                        "hosted_url": item.hosted_url,
+                        "updated_at": item.updated_at,
+                    }
+                    for item in projects[:40]
+                ],
+                "tickets": [
+                    {
+                        "id": item.id,
+                        "ticket_id": item.ticket_id,
+                        "title": item.title,
+                        "project": item.project.name if item.project_id else "",
+                        "status": item.status,
+                        "priority": item.priority,
+                        "source": item.custom_fields.get("source_platform") or item.source,
+                        "updated_at": item.updated_at,
+                    }
+                    for item in tickets[:40]
+                ],
+                "api_queries": [
+                    {
+                        "id": item.id,
+                        "endpoint": item.endpoint,
+                        "method": item.http_method,
+                        "response_code": item.response_code,
+                        "response_time_ms": item.response_time_ms,
+                        "project": item.api_key.project.name if item.api_key_id and item.api_key and item.api_key.project_id else "",
+                        "source_platform": item.api_key.name if item.api_key_id and item.api_key else "external",
+                        "timestamp": item.timestamp,
+                    }
+                    for item in api_logs
+                ],
+                "external_events": [
+                    {
+                        "id": item.id,
+                        "title": item.payload.get("title") or item.event_type,
+                        "source_platform": item.payload.get("source_platform") or item.source_module,
+                        "status": item.payload.get("ticket_status") or item.payload.get("status", "open"),
+                        "project": item.payload.get("project"),
+                        "project_name": item.payload.get("project_name", ""),
+                        "ticket_id": item.payload.get("ticket_id", ""),
+                        "details": item.payload,
+                        "created_at": item.created_at,
+                    }
+                    for item in events
+                ],
+                "servers": server_rows,
+                "file_transfers": [
+                    {
+                        "id": item.id,
+                        "file_name": item.file_name,
+                        "source": item.source_path,
+                        "destination": item.destination_path,
+                        "status": item.status,
+                        "risk_score": item.risk_score,
+                        "size_bytes": item.size_bytes,
+                        "created_at": item.created_at,
+                    }
+                    for item in transfers
+                ],
+                "notifications": [
+                    {
+                        "id": item.id,
+                        "title": item.title,
+                        "message": item.message,
+                        "type": item.type,
+                        "urgency": item.urgency,
+                        "is_read": item.is_read,
+                        "created_at": item.created_at,
+                    }
+                    for item in notifications
+                ],
+                "expiry_alerts": expiry_alerts,
+            },
+        })
+
+
+def _expiry_alert_level(days):
+    if days is None:
+        return ""
+    if days < 0:
+        return "expired"
+    if days <= 7:
+        return "critical"
+    if days <= 30:
+        return "one_month"
+    if days <= 60:
+        return "two_months"
+    return ""

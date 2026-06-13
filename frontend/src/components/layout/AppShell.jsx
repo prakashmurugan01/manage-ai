@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
-import { Outlet } from "react-router-dom";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { Outlet, useLocation } from "react-router-dom";
 
 import { useAuth } from "../../context/AuthContext.jsx";
 import { connectRealtime } from "../../realtime/socket.js";
 import { ROLES } from "../../utils/rbac.js";
 import Sidebar from "./Sidebar.jsx";
 import Topbar from "./Topbar.jsx";
+
+const FloatingAIAssistant = lazy(() => import("../ai/FloatingAIAssistant.jsx"));
 
 function playAlertTone() {
   try {
@@ -32,7 +34,12 @@ function playAlertTone() {
 
 export default function AppShell() {
   const { user } = useAuth();
+  const location = useLocation();
   const [events, setEvents] = useState([]);
+  const isDeployCenter = location.pathname === "/hosting/deploy";
+  const isProjectIntelligence = location.pathname.startsWith("/project-intelligence");
+  const isWideWorkspace = isDeployCenter || isProjectIntelligence;
+  const showAssistant = !isDeployCenter && !isProjectIntelligence;
 
   useEffect(() => {
     const socket = connectRealtime({
@@ -47,15 +54,23 @@ export default function AppShell() {
   }, [user?.role]);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-ink-950 text-slate-100">
+    <div className="relative min-h-screen overflow-hidden bg-[color:var(--page-bg)] text-[color:var(--text)] transition-colors duration-300">
       <div className="pointer-events-none fixed inset-0 animated-grid opacity-35" />
-      <div className="pointer-events-none fixed inset-x-0 top-0 h-56 bg-gradient-to-b from-white/8 to-transparent" />
+      <div
+        className="pointer-events-none fixed inset-x-0 top-0 h-56"
+        style={{ background: "linear-gradient(to bottom, color-mix(in srgb, var(--accent-primary) 8%, transparent), transparent)" }}
+      />
       <Sidebar />
-      <div className="relative min-h-screen lg:pl-72">
+      <div className="shell-content relative min-h-screen transition-[padding-left] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]">
         <Topbar events={events} />
-        <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <main className={`mx-auto w-full px-4 py-6 sm:px-6 lg:px-8 ${isWideWorkspace ? "max-w-[1800px]" : "max-w-7xl"}`}>
           <Outlet context={{ events }} />
         </main>
+        {showAssistant && (
+          <Suspense fallback={null}>
+            <FloatingAIAssistant />
+          </Suspense>
+        )}
       </div>
     </div>
   );

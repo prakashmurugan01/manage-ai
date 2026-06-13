@@ -65,3 +65,44 @@ class DeploymentHistory(TimeStampedModel):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class DeploymentRecord(TimeStampedModel):
+    class Status(models.TextChoices):
+        QUEUED = "QUEUED", "Queued"
+        RUNNING = "RUNNING", "Running"
+        SUCCESS = "SUCCESS", "Success"
+        FAILED = "FAILED", "Failed"
+
+    project = models.ForeignKey(Project, related_name="deployment_records", on_delete=models.CASCADE)
+    hosted_project = models.ForeignKey("hosting.HostedProject", related_name="deployment_records", on_delete=models.SET_NULL, blank=True, null=True)
+    hosting_deployment = models.OneToOneField("hosting.DeploymentRun", related_name="deployment_record", on_delete=models.SET_NULL, blank=True, null=True)
+    project_name = models.CharField(max_length=180)
+    external_project_id = models.CharField(max_length=80, blank=True)
+    client_name = models.CharField(max_length=180, blank=True)
+    assigned_developer = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="assigned_deployment_records", on_delete=models.SET_NULL, blank=True, null=True)
+    assigned_developer_name = models.CharField(max_length=180, blank=True)
+    deployment_at = models.DateTimeField(default=timezone.now, db_index=True)
+    hosting_provider = models.CharField(max_length=80, db_index=True)
+    domain = models.CharField(max_length=255, blank=True, db_index=True)
+    live_url = models.URLField(blank=True)
+    server_details = models.JSONField(default=dict, blank=True)
+    cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    renewal_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    expiry_date = models.DateField(blank=True, null=True, db_index=True)
+    status = models.CharField(max_length=32, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    deployment_logs = models.JSONField(default=list, blank=True)
+    pdf_documents = models.JSONField(default=list, blank=True)
+    configuration_files = models.JSONField(default=list, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="created_deployment_records", on_delete=models.SET_NULL, blank=True, null=True)
+
+    class Meta:
+        ordering = ["-deployment_at", "-created_at"]
+        indexes = [
+            models.Index(fields=["project", "-deployment_at"]),
+            models.Index(fields=["hosting_provider", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.project_name} - {self.status}"

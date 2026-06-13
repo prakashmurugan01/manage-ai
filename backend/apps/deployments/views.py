@@ -6,8 +6,8 @@ from apps.core.mixins import AuditModelViewSetMixin
 from apps.core.permissions import IsAdminLevel, Roles, has_role, is_admin_level
 from apps.documents.models import Document
 
-from .models import DeploymentControl
-from .serializers import DeploymentControlSerializer, DeploymentToggleSerializer
+from .models import DeploymentControl, DeploymentRecord
+from .serializers import DeploymentControlSerializer, DeploymentRecordSerializer, DeploymentToggleSerializer
 
 
 class DeploymentControlViewSet(AuditModelViewSetMixin, viewsets.ModelViewSet):
@@ -64,3 +64,25 @@ class DeploymentControlViewSet(AuditModelViewSetMixin, viewsets.ModelViewSet):
 
         audit_event(request, "DEPLOYMENT_TOGGLE", "DeploymentControl", deployment.pk, {"is_enabled": deployment.is_enabled})
         return Response(DeploymentControlSerializer(deployment, context={"request": request}).data)
+
+
+class DeploymentRecordViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = DeploymentRecordSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["project_name", "client_name", "domain", "hosting_provider", "assigned_developer_name"]
+    ordering_fields = ["deployment_at", "expiry_date", "status", "cost", "renewal_cost"]
+    ordering = ["-deployment_at"]
+    filterset_fields = ["project", "hosted_project", "hosting_provider", "status", "assigned_developer"]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = DeploymentRecord.objects.select_related("project", "hosted_project", "assigned_developer", "created_by")
+        if getattr(user, "company_id", None):
+            qs = qs.filter(Q(project__company_id=user.company_id) | Q(project__company__isnull=True))
+        if has_role(user, Roles.SUPER_ADMIN) or is_admin_level(user):
+            return qs
+        if has_role(user, Roles.DEVELOPER):
+            return qs.filter(Q(project__developers=user) | Q(assigned_developer=user)).distinct()
+        if has_role(user, Roles.CLIENT):
+            return qs.filter(project__client=user).distinct()
+        return qs.none()

@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from rest_framework import decorators, status, viewsets
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.mixins import AuditModelViewSetMixin
@@ -9,9 +11,16 @@ from apps.projects.models import Project
 from apps.tasks.models import Task
 from apps.tasks.serializers import TaskSerializer
 
-from .models import TaskSuggestion
-from .serializers import ApproveSuggestionSerializer, GenerateTaskSuggestionsSerializer, TaskSuggestionSerializer
-from .services import TaskSuggestionService
+from .models import AssistantAttachment, AssistantMessage, AssistantSession, TaskSuggestion
+from .serializers import (
+    ApproveSuggestionSerializer,
+    AssistantChatSerializer,
+    AssistantMessageSerializer,
+    AssistantSessionSerializer,
+    GenerateTaskSuggestionsSerializer,
+    TaskSuggestionSerializer,
+)
+from .services import EnterpriseAssistantService, ROLE_CAPABILITIES, TaskSuggestionService
 
 User = get_user_model()
 
@@ -97,3 +106,142 @@ class TaskSuggestionViewSet(AuditModelViewSetMixin, viewsets.ModelViewSet):
         suggestion.status = TaskSuggestion.Status.APPROVED
         suggestion.save(update_fields=["status", "updated_at"])
         return Response(TaskSerializer(task, context={"request": request}).data, status=status.HTTP_201_CREATED)
+
+
+class AssistantSessionViewSet(viewsets.ModelViewSet):
+    serializer_class = AssistantSessionSerializer
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = AssistantSession.objects.filter(owner=user).select_related("project").prefetch_related("messages")
+        project_id = self.request.query_params.get("project")
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
+    @decorators.action(detail=True, methods=["get"])
+    def messages(self, request, pk=None):
+        session = self.get_object()
+        messages = session.messages.prefetch_related("attachments").all()
+        return Response(AssistantMessageSerializer(messages, many=True, context={"request": request}).data)
+
+    @decorators.action(detail=False, methods=["post"], parser_classes=[JSONParser, MultiPartParser, FormParser])
+    def chat(self, request):
+        serializer = AssistantChatSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        project = self._visible_project(request.user, data.get("project"))
+        session = self._session_for_request(request.user, data, project)
+        user_message = AssistantMessage.objects.create(
+            session=session,
+            role=AssistantMessage.Role.USER,
+            content=data["message"],
+            metadata={
+                "voice": data.get("voice", False),
+                "speak": data.get("speak", False),
+                "model_provider": data.get("model_provider") or "local",
+                "model_name": data.get("model_name") or "manageai-enterprise-local",
+            },
+        )
+        service = EnterpriseAssistantService()
+        attachment_analysis = []
+        for uploaded in request.FILES.getlist("files"):
+            analysis = service.analyze_uploaded_file(uploaded)
+            AssistantAttachment.objects.create(
+                message=user_message,
+                file=uploaded,
+                original_name=getattr(uploaded, "name", "upload.bin"),
+                content_type=getattr(uploaded, "content_type", "") or "",
+                size_bytes=getattr(uploaded, "size", 0) or 0,
+                analysis=analysis,
+            )
+            attachment_analysis.append(analysis)
+        history = list(session.messages.order_by("-created_at").values("role", "content")[:8])
+        result = service.build_reply(
+            request.user,
+            data["message"],
+            mode=data.get("mode") or session.mode,
+            project=project,
+            attachments=attachment_analysis,
+            history=history,
+            requested_provider=data.get("model_provider") or "auto",
+        )
+        assistant_message = AssistantMessage.objects.create(
+            session=session,
+            role=AssistantMessage.Role.ASSISTANT,
+            content=result.answer,
+            metadata={
+                "intent": result.intent,
+                "actions": result.actions,
+                "context": result.context,
+                "provider_used": result.provider_used,
+                "fallback_used": result.fallback_used,
+                "model_provider": data.get("model_provider") or "local",
+                "model_name": data.get("model_name") or "manageai-enterprise-local",
+            },
+        )
+        session.memory = {
+            **(session.memory or {}),
+            "last_intent": result.intent,
+            "last_actions": result.actions,
+            "last_context": result.context,
+        }
+        if session.title == "AI Command Session" and data["message"]:
+            session.title = data["message"][:80]
+        session.mode = data.get("mode") or session.mode
+        session.model_provider = data.get("model_provider") or session.model_provider
+        session.model_name = data.get("model_name") or session.model_name
+        session.save(update_fields=["title", "mode", "model_provider", "model_name", "memory", "updated_at"])
+        return Response(
+            {
+                "session": AssistantSessionSerializer(session, context={"request": request}).data,
+                "user_message": AssistantMessageSerializer(user_message, context={"request": request}).data,
+                "assistant_message": AssistantMessageSerializer(assistant_message, context={"request": request}).data,
+                "intent": result.intent,
+                "actions": result.actions,
+                "provider_used": result.provider_used,
+                "fallback_used": result.fallback_used,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @decorators.action(detail=False, methods=["get"], url_path="role-policy")
+    def role_policy(self, request):
+        service = EnterpriseAssistantService()
+        return Response(
+            {
+                "role": getattr(request.user, "role", "GUEST_VIEWER"),
+                "context": service.system_context(request.user),
+                "roles": ROLE_CAPABILITIES,
+                "providers": service.provider_status(),
+            }
+        )
+
+    def _session_for_request(self, user, data, project):
+        session_id = data.get("session")
+        if session_id:
+            return AssistantSession.objects.get(pk=session_id, owner=user)
+        return AssistantSession.objects.create(
+            owner=user,
+            project=project,
+            mode=data.get("mode") or AssistantSession.Mode.GENERAL,
+            model_provider=data.get("model_provider") or "local",
+            model_name=data.get("model_name") or "manageai-enterprise-local",
+        )
+
+    def _visible_project(self, user, project_id):
+        if not project_id:
+            return None
+        qs = Project.objects.all()
+        if has_role(user, Roles.SUPER_ADMIN) or is_admin_level(user):
+            return qs.get(pk=project_id)
+        if has_role(user, Roles.DEVELOPER):
+            return qs.filter(Q(developers=user) | Q(teams__members=user)).distinct().get(pk=project_id)
+        if has_role(user, Roles.CLIENT):
+            return qs.get(pk=project_id, client=user)
+        return None

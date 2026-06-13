@@ -111,6 +111,7 @@ class TicketSerializer(serializers.ModelSerializer):
             "source",
             "auto_assigned",
             "assignment_reason",
+            "resolution_notes",
             "first_response_at",
             "resolved_at",
             "closed_at",
@@ -177,7 +178,7 @@ class TicketSerializer(serializers.ModelSerializer):
             return attrs
 
         if has_role(user, Roles.DEVELOPER):
-            allowed = {"status", "priority", "assigned_to", "assigned_group", "tags", "custom_fields"}
+            allowed = {"status", "priority", "assigned_to", "assigned_group", "resolution_notes", "tags", "custom_fields"}
             invalid = set(attrs) - allowed
             if invalid:
                 raise serializers.ValidationError("Developers can only update ticket workflow, assignment, tags, and custom fields.")

@@ -15,7 +15,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-This project is configured for SQLite only. No external database server is required.
+The default local file uses SQLite. For MySQL, use `backend\.env.mysql.example` and the MySQL migration flow below.
 
 For private GitHub repositories, set `GITHUB_TOKEN` in `backend\.env`. Public repository branch and commit sync can work without a token, but production should use one to avoid rate limits.
 
@@ -39,6 +39,30 @@ python manage.py makemigrations
 python manage.py migrate
 python manage.py seed_demo
 ```
+
+For a fresh MySQL database, run the all-app migration helper instead:
+
+```bash
+copy .env.mysql.example .env
+python manage.py migrate_mysql
+```
+
+This runs Django `migrate` without an app label, so every installed app migration is applied. It also creates or repairs the default approved login accounts:
+
+| Role | Email | Password |
+|---|---|---|
+| Super Admin | `super@manageai.local` | `ManageAI@12345` |
+| Admin | `admin@manageai.local` | `ManageAI@12345` |
+| Developer | `dev@manageai.local` | `ManageAI@12345` |
+| Client | `client@manageai.local` | `ManageAI@12345` |
+
+If you import existing active users and need them eligible for login immediately, run:
+
+```bash
+python manage.py migrate_mysql --approve-existing-active
+```
+
+Fresh registrations are intentionally set to `PENDING`; an Admin or Super Admin must approve them before password or face login succeeds.
 
 ## 4. Run Backend
 
@@ -146,7 +170,9 @@ Backend production values:
 - `DJANGO_DEBUG=False`.
 - `DJANGO_ALLOWED_HOSTS`: production domains.
 - `CORS_ALLOWED_ORIGINS`: production frontend URL.
-- `DB_NAME`: SQLite file path relative to `backend/`, for example `data/manageai.sqlite3`.
+- `DB_ENGINE`: `sqlite` or `mysql`.
+- `DB_NAME`: SQLite file path relative to `backend/`, or the MySQL database name.
+- `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`: required for MySQL.
 - `REDIS_URL`: Redis instance for Channels.
 - `ACCESS_TOKEN_MINUTES`, `REFRESH_TOKEN_DAYS`.
 - `GITHUB_TOKEN`: token used for GitHub API repository, branch, and commit sync.
@@ -168,14 +194,14 @@ Run migrations inside the backend container:
 
 ```bash
 docker compose exec backend python manage.py makemigrations
-docker compose exec backend python manage.py migrate
+docker compose exec backend python manage.py migrate_mysql
 docker compose exec backend python manage.py seed_demo
 ```
 
 ## Production Hardening Checklist
 
 - Set `DJANGO_DEBUG=False`.
-- Back up the SQLite database file regularly, or mount it to durable storage in Docker.
+- Back up the MySQL database regularly, or mount SQLite to durable storage if you choose SQLite.
 - Use managed Redis or a secured Redis cluster for Channels.
 - Serve Django through Daphne or a process manager behind Nginx.
 - Terminate TLS at the load balancer or Nginx.

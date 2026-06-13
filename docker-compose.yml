@@ -1,4 +1,24 @@
 services:
+  mysql:
+    image: mysql:8.4
+    container_name: manageai-mysql
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: manageai
+      MYSQL_USER: manageai
+      MYSQL_PASSWORD: manageai
+      MYSQL_ROOT_PASSWORD: manageai_root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   redis:
     image: redis:7-alpine
     container_name: manageai-redis
@@ -16,18 +36,24 @@ services:
     env_file:
       - ./backend/.env.example
     environment:
-      DB_NAME: data/manageai.sqlite3
+      DB_ENGINE: mysql
+      DB_NAME: manageai
+      DB_USER: manageai
+      DB_PASSWORD: manageai
+      DB_HOST: mysql
+      DB_PORT: 3306
       REDIS_URL: redis://redis:6379/0
       USE_INMEMORY_CHANNELS: "False"
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,backend
       CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:3000
     depends_on:
+      mysql:
+        condition: service_healthy
       redis:
         condition: service_started
     ports:
       - "8000:8000"
     volumes:
-      - sqlite_data:/app/data
       - media:/app/media
 
   frontend:
@@ -41,6 +67,6 @@ services:
       - "5173:80"
 
 volumes:
-  sqlite_data:
+  mysql_data:
   redis_data:
   media:

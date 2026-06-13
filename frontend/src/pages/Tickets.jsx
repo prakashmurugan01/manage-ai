@@ -1,4 +1,22 @@
-import { CheckCircle2, Images, ImagePlus, LifeBuoy, MessageSquare, Plus, Sparkles, Trash2, UserRoundCheck } from "lucide-react";
+import {
+  Bot,
+  BrainCircuit,
+  CheckCircle2,
+  Clock3,
+  Images,
+  ImagePlus,
+  KeyRound,
+  Layers3,
+  LifeBuoy,
+  MessageSquare,
+  Plus,
+  Radio,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  UserRoundCheck,
+  Webhook,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { listFrom } from "../api/client.js";
@@ -10,12 +28,166 @@ import Page from "../components/ui/Page.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { canManage, ROLES } from "../utils/rbac.js";
 
-const statuses = ["OPEN", "TRIAGED", "IN_PROGRESS", "RESOLVED", "CLOSED"];
+const statuses = ["OPEN", "ASSIGNED", "IN_PROGRESS", "TESTING", "RESOLVED", "CLOSED"];
 const priorities = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+
+const integrationTargets = [
+  { label: "Chatbot Integration", icon: Bot },
+  { label: "CRM Integration", icon: Layers3 },
+  { label: "ERP Integration", icon: Layers3 },
+  { label: "Webhook Integration", icon: Webhook },
+  { label: "External Applications", icon: Radio },
+];
+
+const apiKeyFeatures = [
+  "Rate limiting",
+  "Expiration date",
+  "Project mapping",
+  "Access control",
+  "Usage analytics",
+  "Security monitoring",
+  "Regeneration",
+  "Disable / enable",
+];
+
+const complaintKeywords = ["payment issue", "complaint", "server error", "order failed", "refund not received"];
+const capturedFields = ["User query", "Complaint type", "Error message", "Issue category", "User information", "Timestamp", "Source system", "Priority"];
+const ticketSurfaces = ["Super Admin Dashboard", "Admin Dashboard", "Complaint Management Page", "Live Ticket Panel"];
+const severityLevels = ["Critical", "High", "Medium", "Low"];
+
+function IntegrationWorkflowPanel() {
+  const flow = [
+    ["Detect keywords", "Matched complaint phrases trigger the external intake API.", Bot],
+    ["Collect context", "Conversation data is normalized into a ticket-ready payload.", MessageSquare],
+    ["Create ticket", "The platform opens a mapped project ticket automatically.", LifeBuoy],
+    ["Classify priority", "AI assigns Critical, High, Medium, or Low severity.", BrainCircuit],
+  ];
+
+  return (
+    <section className="mb-6 grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+      <div className="panel overflow-hidden p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200">
+              <KeyRound size={14} />
+              Core API Integration Workflow
+            </div>
+            <h2 className="mt-4 text-xl font-semibold text-white">Secure keys that turn chatbot complaints into tickets</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+              Administrators can generate project-scoped API keys for chatbots, CRM, ERP, webhooks, and external apps. When a connected chatbot sees a complaint signal, the platform receives the conversation payload and creates a ticket instantly.
+            </p>
+          </div>
+          <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 px-3 py-2 text-xs font-semibold text-emerald-100">
+            Auto ticketing enabled
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {integrationTargets.map(({ label, icon: Icon }) => (
+            <div key={label} className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
+              <Icon size={18} className="text-cyan-200" />
+              <p className="mt-2 text-sm font-semibold text-white">{label}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
+            <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-400">
+              <ShieldCheck size={14} />
+              API key controls
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {apiKeyFeatures.map((feature) => (
+                <span key={feature} className="rounded-md border border-white/10 bg-slate-950/35 px-3 py-2 text-xs text-slate-300">
+                  {feature}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
+            <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-400">
+              <Sparkles size={14} />
+              Complaint keywords
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {complaintKeywords.map((keyword) => (
+                <span key={keyword} className="rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-1 text-xs text-amber-100">
+                  {keyword}
+                </span>
+              ))}
+            </div>
+            <p className="mt-4 text-sm leading-6 text-slate-400">
+              Example chatbot messages like payment issue, server error, or refund not received can trigger the API without manual intervention.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4">
+        <div className="panel p-5">
+          <div className="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-400">
+            <Clock3 size={14} />
+            Automation sequence
+          </div>
+          <div className="space-y-3">
+            {flow.map(([title, detail, Icon], index) => (
+              <div key={title} className="flex gap-3 rounded-lg border border-white/10 bg-white/[0.035] p-3">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-cyan-300/10 text-cyan-200">
+                  <Icon size={16} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-white">Step {index + 1}: {title}</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">{detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="panel p-4">
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-400">Captured data</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {capturedFields.map((field) => (
+                <span key={field} className="rounded-md bg-white/[0.05] px-2.5 py-1 text-xs text-slate-300">{field}</span>
+              ))}
+            </div>
+          </div>
+          <div className="panel p-4">
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-400">AI classification</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {severityLevels.map((level) => (
+                <Badge key={level} value={level.toUpperCase()} />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel p-4">
+          <p className="text-xs font-medium uppercase tracking-[0.14em] text-slate-400">Instant visibility</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {ticketSurfaces.map((surface) => (
+              <span key={surface} className="rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2 text-xs text-slate-300">
+                {surface}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 function TicketCard({ ticket, users, canAssign, onUpdate, onComment, onDelete }) {
   const [reply, setReply] = useState("");
+  const [resolutionNotes, setResolutionNotes] = useState(ticket.resolution_notes || "");
   const developers = users.filter((user) => [ROLES.DEVELOPER, ROLES.ADMIN, ROLES.SUPER_ADMIN].includes(user.role));
+
+  useEffect(() => {
+    setResolutionNotes(ticket.resolution_notes || "");
+  }, [ticket.id, ticket.resolution_notes]);
 
   async function submitReply(event) {
     event.preventDefault();
@@ -86,6 +258,16 @@ function TicketCard({ ticket, users, canAssign, onUpdate, onComment, onDelete })
               Delete
             </Button>
           )}
+          <textarea
+            className="field min-h-24 text-sm"
+            placeholder="Resolution notes"
+            value={resolutionNotes}
+            onChange={(event) => setResolutionNotes(event.target.value)}
+          />
+          <Button variant="secondary" onClick={() => onUpdate(ticket.id, { resolution_notes: resolutionNotes, status: resolutionNotes.trim() ? "RESOLVED" : ticket.status })}>
+            <CheckCircle2 size={16} />
+            Save Resolution
+          </Button>
         </div>
       </div>
 
@@ -191,6 +373,8 @@ export default function Tickets() {
         </>
       }
     >
+      <IntegrationWorkflowPanel />
+
       <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {statuses.map((item) => (
           <div key={item} className="panel p-4">

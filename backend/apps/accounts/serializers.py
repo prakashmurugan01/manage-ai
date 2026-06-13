@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework.exceptions import AuthenticationFailed
 
 from apps.core.permissions import Roles, has_role
 
@@ -147,12 +148,23 @@ class UserWriteSerializer(UserSerializer):
 
     class Meta(UserSerializer.Meta):
         fields = UserSerializer.Meta.fields + ("password",)
-        read_only_fields = ("id", "secret_id", "approved_by", "approved_at", "suspended_at", "face_enrolled_at", "last_login", "last_seen_at", "date_joined")
+        read_only_fields = ("id", "approved_by", "approved_at", "suspended_at", "face_enrolled_at", "last_login", "last_seen_at", "date_joined")
 
     def validate_role(self, value):
         request = self.context.get("request")
         if value in {Roles.SUPER_ADMIN, Roles.ADMIN} and not has_role(getattr(request, "user", None), Roles.SUPER_ADMIN):
             raise serializers.ValidationError("Only Super Admins can assign admin-level roles.")
+        return value
+
+    def validate_secret_id(self, value):
+        value = str(value or "").strip().upper()
+        if not value:
+            return None
+        qs = User.objects.filter(secret_id__iexact=value)
+        if self.instance:
+            qs = qs.exclude(id=self.instance.id)
+        if qs.exists():
+            raise serializers.ValidationError("This user ID is already assigned.")
         return value
 
     def create(self, validated_data):
@@ -188,6 +200,12 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         data = super().validate(attrs)
+        if self.user.approval_status == User.ApprovalStatus.PENDING:
+            raise AuthenticationFailed("Your account is pending approval.")
+        if self.user.approval_status == User.ApprovalStatus.REJECTED:
+            raise AuthenticationFailed("Your account registration was rejected. Contact an administrator.")
+        if self.user.approval_status == User.ApprovalStatus.SUSPENDED:
+            raise AuthenticationFailed("Your account is suspended. Contact an administrator.")
         data["user"] = UserSerializer(self.user, context=self.context).data
         return data
 
